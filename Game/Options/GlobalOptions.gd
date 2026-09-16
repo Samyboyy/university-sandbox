@@ -189,7 +189,8 @@ func isContentEnabled(contentType):
 	return enabledContent[contentType]
 
 func shouldFetchGithubRelease():
-	return fetchNewRelease
+	# University Sandbox: never check BDCC's GitHub releases.
+	return false
 
 func getMenstrualCycleLengthDays():
 	return menstrualCycleLengthDays
@@ -904,14 +905,6 @@ func getChangeableOptions():
 			"name": "Other",
 			"id": "other",
 			"options": [
-				{
-					"name": "Fetch latest release",
-					"description": "Should the game load latest update info from github when starting the game",
-					"id": "fetchLatestRelease",
-					"type": "checkbox",
-					"value": fetchNewRelease,
-					"tab": TAB_INTERFACE,
-				},
 				{
 					"name": "Show speaker name",
 					"description": "Adds a name of the speaker before the speech",

@@ -4,14 +4,16 @@ extends Node
 
 func _init():
 	var exe_dir = OS.get_executable_path().get_base_dir()
-	var portable_dir = exe_dir.plus_file("BDCCData/")
+	var portable_dir = exe_dir.plus_file("UniversitySandboxData/")
 
 	if Directory.new().dir_exists(portable_dir):
 		call_deferred("delayedLogPrint", "Using portable save directory: " + portable_dir)
 
-		var portable_dir_suffix = "/Godot/app_userdata/BDCC"
+		# Must match application/config/custom_user_dir_name in project.godot
+		var user_dir_name = str(ProjectSettings.get_setting("application/config/custom_user_dir_name"))
+		var portable_dir_suffix = "/" + user_dir_name
 		if OS.get_name() == "X11":
-			portable_dir_suffix = "/.local/share/godot/app_userdata/BDCC"
+			portable_dir_suffix = "/.local/share/" + user_dir_name
 		if !Directory.new().dir_exists(portable_dir.plus_file(portable_dir_suffix)):
 			Directory.new().make_dir_recursive(portable_dir.plus_file(portable_dir_suffix))
 		

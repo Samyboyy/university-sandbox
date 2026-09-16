@@ -2450,7 +2450,9 @@ _global_script_class_icons={
 
 [application]
 
-config/name="BDCC"
+config/name="University Sandbox"
+config/use_custom_user_dir=true
+config/custom_user_dir_name="university_sandbox"
 run/main_scene="res://UI/LaunchScreen/LaunchScreen.tscn"
 config/project_settings_override="user://override.cfg"
 run/flush_stdout_on_print=true

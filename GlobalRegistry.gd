@@ -592,7 +592,8 @@ func registerEverything():
 	var start = OS.get_ticks_usec()
 	loadRegistryCacheFromFile()
 	
-	startLoadingDonationData()
+	# University Sandbox: BDCC donation data (local file + GitHub request) is no longer loaded at startup.
+	# getDonationDataString() returns "" when no data is loaded.
 	
 	emit_signal("loadingUpdate", 0.0/totalStages, "Modules pre-init")
 	yield(get_tree(), "idle_frame")
