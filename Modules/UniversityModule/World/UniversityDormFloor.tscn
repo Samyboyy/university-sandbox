@@ -1,0 +1,18 @@
+[gd_scene load_steps=3 format=2]
+
+[ext_resource path="res://Game/World/GameRoom.tscn" type="PackedScene" id=1]
+[ext_resource path="res://Game/World/SubWorld.tscn" type="PackedScene" id=2]
+
+[node name="UniversityDormFloor" instance=ExtResource( 2 )]
+
+[node name="PrivateDormRoom" parent="." index="0" instance=ExtResource( 1 )]
+position = Vector2( -6400, -6400 )
+roomName = "Private Dorm Room"
+roomID = "university_private_dorm"
+roomDescription = "Your own room in the first-year residence hall. It's small and still mostly bare: a single bed with fresh sheets, a desk and chair under the window, a wardrobe and a few moving boxes you haven't unpacked yet. Nobody else lives here. The bathrooms, kitchen and laundry are shared facilities down the hall."
+canWest = false
+canNorth = false
+canEast = false
+canSouth = false
+roomSprite = 10
+roomColor = 3

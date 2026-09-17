@@ -21,6 +21,12 @@ const SCHEMA_VERSION_KEY := "schema_version"
 const SYSTEMS_KEY := "systems"
 
 const CURRENT_SCHEMA_VERSION := 1
+
+# Optional systems whose data shape is checked when present (system id -> validator script).
+# Validators expose validate(data) -> String and must not touch live state.
+const SYSTEM_VALIDATORS := {
+	"student_profile": preload("res://Game/University/UniversityStudentProfile.gd"),
+}
 const MIN_SUPPORTED_SCHEMA_VERSION := 1
 
 # Returns {"ok": bool, "error": String, "warnings": Array, "section": Dictionary}.
@@ -77,6 +83,10 @@ func checkCurrentStructure(section:Dictionary) -> String:
 			return "University systems table has an invalid system id '" + str(systemID) + "'"
 		if(!(systems[systemID] is Dictionary)):
 			return "University system '" + systemID + "' data is malformed (expected a dictionary, found " + describeType(systems[systemID]) + ")"
+		if(SYSTEM_VALIDATORS.has(systemID)):
+			var systemError:String = SYSTEM_VALIDATORS[systemID].new().validate(systems[systemID])
+			if(systemError != ""):
+				return systemError
 	return ""
 
 # JSON numbers load as floats, so 1.0 counts as 1. Booleans and fractions do not.

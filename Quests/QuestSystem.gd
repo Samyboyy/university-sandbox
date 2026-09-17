@@ -23,8 +23,23 @@ func isCompleted(questID):
 
 func isActive(questID):
 	assert(quests.has(questID))
+	if(isHiddenByUniversityRoute(questID)):
+		return false
 	
 	return quests[questID].isVisible() && !quests[questID].isCompleted()
+
+# University Sandbox: games with a valid student profile (University route) don't expose
+# BDCC's prison/story quests. Quests stay registered; only University-owned ids ("university_")
+# would be shown. See Docs/UNIVERSITY_NEW_GAME.md.
+const UniversityStudentProfile = preload("res://Game/University/UniversityStudentProfile.gd")
+const UNIVERSITY_QUEST_PREFIX = "university_"
+
+func isHiddenByUniversityRoute(questID) -> bool:
+	if(str(questID).begins_with(UNIVERSITY_QUEST_PREFIX)):
+		return false
+	if(GM.main == null || GM.main.get("university") == null):
+		return false
+	return UniversityStudentProfile.new().isUniversityGame(GM.main.university)
 
 func getQuests():
 	return quests
@@ -49,4 +64,8 @@ func getAllQuests():
 	for missionID in GlobalRegistry.missionQuests:
 		result["mission#"+missionID] = GlobalRegistry.missionQuests[missionID]
 	
+	for questID in result.keys():
+		if(isHiddenByUniversityRoute(questID)):
+			var _removed = result.erase(questID)
+
 	return result

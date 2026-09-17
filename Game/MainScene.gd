@@ -267,7 +267,9 @@ func startNewGame():
 	applyAllWorldEdits()
 	GM.world.addTransitions()
 	
-	runScene("IntroScene")
+	# University Sandbox: production new games use the University route (Docs/UNIVERSITY_NEW_GAME.md).
+	# BDCC's prison IntroScene stays registered but is no longer started here.
+	runScene("UniversityNewGameScene")
 	#runScene("FightScene", ["testchar"])
 	#runScene("FightScene", ["tavi"])
 
