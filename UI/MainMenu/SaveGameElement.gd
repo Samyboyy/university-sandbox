@@ -6,6 +6,7 @@ signal onLoadButtonPressed(saveFile)
 signal onDeleteButtonPressed(saveFile)
 signal onExportButtonPressed(saveFile)
 var showLoadButton = true
+var isLoadable = true
 var isInDeleteMode = false
 
 # Called when the node enters the scene tree for the first time.
@@ -23,8 +24,13 @@ func setSaveFile(path):
 	
 	var gameData = SAVE.loadGameInformationFromSave(path)
 	var extra = ""
+	isLoadable = true
 	if(gameData == null):
 		extra = "Couldn't load game info, bad save?"
+		isLoadable = false
+	elif(gameData.get("error", "") != ""):
+		extra = "[color=red]Can't load: "+str(gameData["error"]).replace("[", "[lb]")+"[/color]"
+		isLoadable = false
 	else:
 		extra = "Name: "+str(gameData["gamename"])+" - Day: "+str(gameData["currentDay"])+" - Credits: "+str(gameData["credits"])
 		extra += " - Time: "+str(Util.getTimeStringHHMM(gameData["timeOfDay"]))
@@ -33,6 +39,7 @@ func setSaveFile(path):
 	var isExternal:bool = !saveFile.begins_with("user://")
 	
 	saveNameLabel.bbcode_text = ("(External) " if isExternal else "") + "[b]" + saveFile.get_file() + "[/b] - " + fileModifTimeString + "\n"+extra
+	updateButtons()
 
 func _on_LoadButton_pressed():
 	emit_signal("onLoadButtonPressed", saveFile)
@@ -49,7 +56,7 @@ func updateButtons():
 	else:
 		$DeleteButton.visible = false
 		if(showLoadButton):
-			$LoadButton.visible = true
+			$LoadButton.visible = isLoadable
 			$ExportButton.visible = true
 		else:
 			$LoadButton.visible = false

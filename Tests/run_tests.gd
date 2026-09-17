@@ -12,6 +12,7 @@ extends SceneTree
 #
 # Exit codes: 0 = every assertion passed, 1 = at least one assertion failed or a phase timed out.
 # Assertions describe the current baseline; later tickets may update them deliberately.
+# T3 adds save identity, University schema and invalid-save rejection coverage (phases 5-7).
 
 const EXPECTED_DISPLAY_NAME := "University Sandbox"
 const EXPECTED_USER_DIR_NAME := "university_sandbox"
@@ -20,6 +21,13 @@ const TEST_PLAYER_NAME := "HarnessTester_RoundTrip"
 const MUTATED_PLAYER_NAME := "HarnessTester_Mutated"
 const CREDITS_DELTA := 4242
 const MUTATED_SCENE_STATE := "__harness_mutated_state__"
+const PROBE_SYSTEM_ID := "harness_probe"
+const PROBE_DATA := {"marker": "t3-roundtrip", "count": 3, "nested": {"flag": true}}
+const REJECT_SAVE_PREFIX := "user://saves/us_harness_reject_"
+const LIVE_NAME_BEFORE_REJECTS := "HarnessTester_LiveBeforeRejects"
+const NAME_BEFORE_FINAL_LOAD := "HarnessTester_BeforeFinalLoad"
+const EXPECTED_GAME_ID := "university_sandbox"
+const EXPECTED_SCHEMA_VERSION := 1
 
 const LAUNCH_SCENE := "res://UI/LaunchScreen/LaunchScreen.tscn"
 const MAIN_MENU_SCENE := "res://UI/MainMenu/MainMenu.tscn"
@@ -69,6 +77,14 @@ func _idle(delta):
 	elif(step == 6):
 		if(frames >= SETTLE_FRAMES):
 			phaseVerifyRoundTrip()
+	elif(step == 7):
+		phaseRejections()
+	elif(step == 8):
+		if(frames >= SETTLE_FRAMES):
+			phaseMenuLoadRefusalAndFinalLoad()
+	elif(step == 9):
+		if(frames >= SETTLE_FRAMES):
+			phaseVerifyFinalLoad()
 	return false
 
 
@@ -142,6 +158,56 @@ func sceneIDsOf(stack:Array) -> Array:
 	for scene in stack:
 		result.append(scene.sceneID)
 	return result
+
+
+func sortedJSON(value) -> String:
+	return JSON.print(value, "", true)
+
+
+func readJSONFile(thePath:String):
+	var theFile := File.new()
+	if(theFile.open(thePath, File.READ) != OK):
+		return null
+	var text:String = theFile.get_as_text()
+	theFile.close()
+	var parsed = JSON.parse(text)
+	if(parsed.error != OK):
+		return null
+	return parsed.result
+
+
+func writeTextFile(thePath:String, text:String) -> bool:
+	var theFile := File.new()
+	if(theFile.open(thePath, File.WRITE) != OK):
+		return false
+	theFile.store_string(text)
+	theFile.close()
+	return true
+
+
+# Everything a rejected load must leave untouched.
+func liveStateFingerprint() -> String:
+	var gm = getNode("GM")
+	var registry = getNode("GlobalRegistry")
+	var save = getNode("SAVE")
+	var currentScene = gm.main.getCurrentScene()
+	return sortedJSON({
+		"name": gm.pc.getName(),
+		"credits": gm.pc.getCredits(),
+		"location": gm.pc.getLocation(),
+		"day": gm.main.getDays(),
+		"time": gm.main.getTime(),
+		"sceneIDs": sceneIDsOf(gm.main.sceneStack),
+		"sceneInstances": instanceIDsOf(gm.main.sceneStack),
+		"sceneState": currentScene.state if currentScene != null else "",
+		"university": gm.main.university.saveData(),
+		"uniqueID": registry.currentUniqueID,
+		"npcUniqueID": registry.currentNPCUniqueID,
+		"currentSave": registry.currentSave,
+		"loadedSavefileVersion": save.getLoadedSavefileVersion(),
+		"main": gm.main.get_instance_id(),
+		"pc": gm.pc.get_instance_id(),
+	})
 
 
 func instanceIDsOf(stack:Array) -> Array:
@@ -299,6 +365,10 @@ func phaseNewGameAndSave():
 	beginPhase("Phase 5a: save")
 	gm.pc.setName(TEST_PLAYER_NAME)
 	gm.pc.addCredits(CREDITS_DELTA)
+	check(gm.main.get("university") != null, "live University Sandbox data exists for the new game", "GM.main.university", gm.main.get("university"))
+	check(gm.main.university.saveData()["systems"].empty(), "new game starts with empty University systems data", {}, gm.main.university.saveData()["systems"])
+	gm.main.university.setSystemData(PROBE_SYSTEM_ID, PROBE_DATA)
+	recorded["university"] = sortedJSON(gm.main.university.saveData())
 	recorded["name"] = gm.pc.getName()
 	recorded["credits"] = gm.pc.getCredits()
 	recorded["location"] = gm.pc.getLocation()
@@ -328,11 +398,24 @@ func phaseNewGameAndSave():
 	if(!saveExists):
 		abortRun("save file was not written")
 		return
+	var onDisk = readJSONFile(TEST_SAVE_PATH)
+	check(onDisk is Dictionary, "test save is a JSON dictionary", "Dictionary", typeof(onDisk))
+	if(onDisk is Dictionary):
+		check(onDisk.get("game_id") == EXPECTED_GAME_ID, "save carries the University Sandbox game id", EXPECTED_GAME_ID, onDisk.get("game_id"))
+		var section = onDisk.get("university")
+		check(section is Dictionary, "save has a University data section", "Dictionary", typeof(section))
+		if(section is Dictionary):
+			check(section.get("schema_version") == EXPECTED_SCHEMA_VERSION, "save carries University schema version 1", EXPECTED_SCHEMA_VERSION, section.get("schema_version"))
+			var systems = section.get("systems", {})
+			var probe = systems.get(PROBE_SYSTEM_ID) if systems is Dictionary else null
+			check(probe != null && sortedJSON(probe) == sortedJSON(PROBE_DATA), "save contains the University probe data", sortedJSON(PROBE_DATA), sortedJSON(probe))
 
 	beginPhase("Phase 5b: alter in-memory state")
 	gm.pc.setName(MUTATED_PLAYER_NAME)
 	gm.pc.addCredits(-1111)
 	currentScene.state = MUTATED_SCENE_STATE
+	gm.main.university.setSystemData(PROBE_SYSTEM_ID, {"marker": "mutated"})
+	check(sortedJSON(gm.main.university.saveData()) != recorded["university"], "in-memory University data changed before load", "!= saved", sortedJSON(gm.main.university.saveData()))
 	check(gm.pc.getName() == MUTATED_PLAYER_NAME, "in-memory name changed before load", MUTATED_PLAYER_NAME, gm.pc.getName())
 	check(gm.pc.getCredits() != recorded["credits"], "in-memory credits changed before load", "!= " + str(recorded["credits"]), gm.pc.getCredits())
 	check(currentScene.state == MUTATED_SCENE_STATE, "in-memory scene state changed before load", MUTATED_SCENE_STATE, currentScene.state)
@@ -342,8 +425,9 @@ func phaseNewGameAndSave():
 func phaseLoad():
 	beginPhase("Phase 5c: load through SaveManager")
 	var save = getNode("SAVE")
-	save.loadGame(TEST_SAVE_PATH)
-	info("SAVE.loadGame(" + TEST_SAVE_PATH + ") returned")
+	var loaded:bool = save.tryLoadGame(TEST_SAVE_PATH)
+	check(loaded, "SAVE.tryLoadGame accepts the University Sandbox save", true, loaded)
+	check(save.getLastLoadError() == "", "no load error is recorded", "", save.getLastLoadError())
 	nextStep(6)
 
 
@@ -369,4 +453,136 @@ func phaseVerifyRoundTrip():
 		if(oldInstances.has(instanceID)):
 			anyReused = true
 	check(!anyReused && stack.size() > 0, "scene objects were rebuilt by the load (real save/load path)", "new scene instances", instanceIDsOf(stack))
+	check(sortedJSON(gm.main.university.saveData()) == recorded["university"], "University data restored from the save", recorded["university"], sortedJSON(gm.main.university.saveData()))
+	check(sortedJSON(gm.main.university.getSystemData(PROBE_SYSTEM_ID)) == sortedJSON(PROBE_DATA), "University probe system data restored", sortedJSON(PROBE_DATA), sortedJSON(gm.main.university.getSystemData(PROBE_SYSTEM_ID)))
+	nextStep(7)
+
+
+# ---------------------------------------------------------------- phase 6 + 7
+
+# Each case: [id, expected error fragment, how to build the file]
+func rejectionCases() -> Array:
+	return [
+		["foreign_game_id", "belongs to another game", {"set": {"game_id": "bdcc"}}],
+		["non_text_game_id", "belongs to another game", {"set": {"game_id": 42}}],
+		["missing_game_id", "Not a University Sandbox save", {"erase": ["game_id"]}],
+		["future_savefile_version", "savefile is not supported", {"set": {"savefile_version": 99}}],
+		["missing_savefile_version", "valid version", {"erase": ["savefile_version"]}],
+		["missing_player", "missing player data", {"erase": ["player"]}],
+		["malformed_main", "missing main game data", {"set": {"main": "not a dictionary"}}],
+		["missing_university_section", "missing its University Sandbox data section", {"erase": ["university"]}],
+		["malformed_university_section", "University save data is malformed", {"set": {"university": "garbage"}}],
+		["missing_schema_version", "has no schema version", {"section_erase": ["schema_version"]}],
+		["malformed_schema_version", "schema version is malformed", {"section_set": {"schema_version": "one"}}],
+		["boolean_schema_version", "schema version is malformed", {"section_set": {"schema_version": true}}],
+		["fractional_schema_version", "schema version is malformed", {"section_set": {"schema_version": 1.5}}],
+		["future_schema_version", "only supports up to version 1", {"section_set": {"schema_version": 999}}],
+		["older_schema_version", "older than the oldest supported version", {"section_set": {"schema_version": 0}}],
+		["missing_systems_table", "missing its systems table", {"section_erase": ["systems"]}],
+		["malformed_systems_table", "systems table is malformed", {"section_set": {"systems": [1, 2, 3]}}],
+		["malformed_system_entry", "data is malformed", {"section_set": {"systems": {"harness_probe": "not a dictionary"}}}],
+		["not_json", "not valid JSON", {"raw": "{ this is not json"}],
+		["json_array", "unexpected file structure", {"raw": "[1, 2, 3]"}],
+		["missing_file", "not found", {"missing": true}],
+	]
+
+
+func buildRejectionFile(thePath:String, validSave:Dictionary, recipe:Dictionary) -> bool:
+	if(recipe.has("missing")):
+		return true
+	if(recipe.has("raw")):
+		return writeTextFile(thePath, recipe["raw"])
+	var data:Dictionary = validSave.duplicate(true)
+	for key in recipe.get("erase", []):
+		var _had = data.erase(key)
+	for key in recipe.get("set", {}).keys():
+		data[key] = recipe["set"][key]
+	for key in recipe.get("section_erase", []):
+		var _hadInSection = data["university"].erase(key)
+	for key in recipe.get("section_set", {}).keys():
+		data["university"][key] = recipe["section_set"][key]
+	return writeTextFile(thePath, JSON.print(data, "\t"))
+
+
+func phaseRejections():
+	var gm = getNode("GM")
+	var save = getNode("SAVE")
+	var theFile := File.new()
+	beginPhase("Phase 6: invalid saves are rejected without touching live state")
+
+	var validSave = readJSONFile(TEST_SAVE_PATH)
+	if(!(validSave is Dictionary)):
+		abortRun("could not read the valid test save to build rejection cases")
+		return
+	# Make live state differ from every file, so any partial load would be visible.
+	gm.pc.setName(LIVE_NAME_BEFORE_REJECTS)
+	gm.pc.addCredits(7)
+	gm.main.university.setSystemData(PROBE_SYSTEM_ID, {"marker": "live-before-rejects"})
+
+	for testCase in rejectionCases():
+		var caseID:String = testCase[0]
+		var expectedError:String = testCase[1]
+		var recipe:Dictionary = testCase[2]
+		var thePath:String = REJECT_SAVE_PREFIX + caseID + ".save"
+		var onDisk:String = ProjectSettings.globalize_path(thePath)
+		if(!isInsideTestRoot(onDisk)):
+			check(false, caseID + ": fixture path is inside the temporary test root", testRoot + "/...", onDisk)
+			abortRun("refusing to write a fixture outside the test root")
+			return
+		if(!buildRejectionFile(thePath, validSave, recipe)):
+			check(false, caseID + ": fixture file can be written", "written", thePath)
+			continue
+		var isMissing:bool = recipe.has("missing")
+		var md5Before:String = "" if isMissing else theFile.get_md5(thePath)
+
+		var before:String = liveStateFingerprint()
+		var loaded:bool = save.tryLoadGame(thePath)
+		var after:String = liveStateFingerprint()
+		var theError:String = save.getLastLoadError()
+
+		check(!loaded, caseID + ": load is refused", false, loaded)
+		check(theError.find(expectedError) >= 0, caseID + ": error explains why", "contains '" + expectedError + "'", theError)
+		check(after == before, caseID + ": live game state is unchanged", before, after)
+		if(isMissing):
+			check(!theFile.file_exists(thePath), caseID + ": no file was created", false, theFile.file_exists(thePath))
+		else:
+			check(theFile.file_exists(thePath) && theFile.get_md5(thePath) == md5Before, caseID + ": file is left exactly as it was", md5Before, theFile.get_md5(thePath))
+			var summary = save.loadGameInformationFromSaveRaw(thePath)
+			check(summary == null || (summary is Dictionary && summary.get("error", "") != ""), caseID + ": save list marks it as not loadable",
+				"null or {error: ...}", summary)
+
+	var latest:String = save.getLatestLoadableSavePath()
+	check(latest == TEST_SAVE_PATH, "resume picks the valid save and skips invalid ones", TEST_SAVE_PATH, latest)
+	check(save.canResumeGame(), "resume is still offered while a valid save exists", true, save.canResumeGame())
+
+	# Main-menu load path: must refuse before leaving the current scene.
+	recorded["sceneBeforeMenuLoad"] = current_scene.get_instance_id()
+	recorded["mainBeforeMenuLoad"] = gm.main.get_instance_id()
+	recorded["fingerprintBeforeMenuLoad"] = liveStateFingerprint()
+	var _state = save.switchToGameAndLoad(REJECT_SAVE_PREFIX + "foreign_game_id.save")
+	nextStep(8)
+
+
+func phaseMenuLoadRefusalAndFinalLoad():
+	var gm = getNode("GM")
+	var save = getNode("SAVE")
+	check(current_scene.get_instance_id() == recorded["sceneBeforeMenuLoad"] && gm.main.get_instance_id() == recorded["mainBeforeMenuLoad"],
+		"switchToGameAndLoad refuses a foreign save without switching scenes", "same scene", "scene changed" if current_scene.get_instance_id() != recorded["sceneBeforeMenuLoad"] else "same scene")
+	check(liveStateFingerprint() == recorded["fingerprintBeforeMenuLoad"], "refused menu load leaves live state unchanged", recorded["fingerprintBeforeMenuLoad"], liveStateFingerprint())
+	check(save.getLastLoadError().find("belongs to another game") >= 0, "refused menu load records the reason", "belongs to another game", save.getLastLoadError())
+
+	beginPhase("Phase 7: a valid save still loads after rejections")
+	gm.pc.setName(NAME_BEFORE_FINAL_LOAD)
+	var loaded:bool = save.tryLoadGame(TEST_SAVE_PATH)
+	check(loaded, "valid save loads after the rejection cases", true, loaded)
+	check(save.getLastLoadError() == "", "load error is cleared after a successful load", "", save.getLastLoadError())
+	nextStep(9)
+
+
+func phaseVerifyFinalLoad():
+	var gm = getNode("GM")
+	check(gm.pc.getName() == recorded["name"], "player name restored by the final load", recorded["name"], gm.pc.getName())
+	check(gm.pc.getCredits() == recorded["credits"], "player credits restored by the final load", recorded["credits"], gm.pc.getCredits())
+	check(sortedJSON(gm.main.university.saveData()) == recorded["university"], "University data restored by the final load", recorded["university"], sortedJSON(gm.main.university.saveData()))
+	check(sceneIDsOf(gm.main.sceneStack) == recorded["sceneIDs"], "scene stack restored by the final load", recorded["sceneIDs"], sceneIDsOf(gm.main.sceneStack))
 	finishRun()

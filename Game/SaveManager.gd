@@ -6,6 +6,12 @@ var maxBackupQuicksaves = 3
 var loadedSavefileVersion = -1
 
 var saveInfoCache:Dictionary = {}
+const SAVE_INFO_CACHE_VERSION = 2 # 2: entries carry an "error" field (University Sandbox save validation)
+
+# University Sandbox save identity and schema (see Docs/SAVE_SCHEMA.md)
+const UniversitySaveSchema = preload("res://Game/University/UniversitySaveSchema.gd")
+var universitySchema = UniversitySaveSchema.new()
+var lastLoadError:String = ""
 
 func _ready():
 	loadSaveInfoCacheFromFile()
@@ -19,6 +25,8 @@ func saveData():
 		"currentTFID_DONT_TOUCH": GlobalRegistry.currentTFID,
 		"currentSave": GlobalRegistry.currentSave,
 	}
+	data[UniversitySaveSchema.GAME_ID_KEY] = UniversitySaveSchema.GAME_ID
+	data[UniversitySaveSchema.SECTION_KEY] = GM.main.university.saveData()
 	
 	data["player"] = GM.main.getOriginalPC().saveData()
 	if(GM.main.getOverriddenPC() != null):
@@ -31,15 +39,56 @@ func saveData():
 	
 	return data
 
-func loadData(data: Dictionary):
-	if(!data.has("savefile_version")):
-		Log.printerr("Error: Save file doesn't have a version in it. It might not be a savefile")
-		return
+# The single validation gate for a whole save. Reads only; never changes live state or `data`.
+# Order: structure -> savefile_version -> game identity -> base sections -> University schema/migration.
+# Returns {"ok": bool, "error": String, "university": Dictionary (validated and migrated)}.
+func validateSaveData(data) -> Dictionary:
+	if(!(data is Dictionary)):
+		return makeValidationFailure("Not a save file (unexpected file structure)")
+	if(!data.has("savefile_version") || !universitySchema.isWholeNumber(data["savefile_version"])):
+		return makeValidationFailure("Save file doesn't have a valid version in it. It might not be a savefile")
 	if(data["savefile_version"] > currentSavefileVersion):
-		Log.printerr("Error: This savefile is not supported, sorry. Current supported version: "+str(currentSavefileVersion)+". Savefile version: "+data["savefile_version"])
-		return
-		
-	loadedSavefileVersion = data["savefile_version"]
+		return makeValidationFailure("This savefile is not supported, sorry. Current supported version: "+str(currentSavefileVersion)+". Savefile version: "+str(data["savefile_version"]))
+	if(!data.has(UniversitySaveSchema.GAME_ID_KEY)):
+		return makeValidationFailure("Not a University Sandbox save (it has no game id, so it may be from BDCC or an older test build)")
+	var gameID = data[UniversitySaveSchema.GAME_ID_KEY]
+	if(!(gameID is String) || gameID != UniversitySaveSchema.GAME_ID):
+		return makeValidationFailure("This save belongs to another game ('"+str(gameID)+"'), not University Sandbox")
+	if(!data.has("player") || !(data["player"] is Dictionary)):
+		return makeValidationFailure("Save is missing player data")
+	if(!data.has("main") || !(data["main"] is Dictionary)):
+		return makeValidationFailure("Save is missing main game data")
+	if(!data.has(UniversitySaveSchema.SECTION_KEY)):
+		return makeValidationFailure("Save is missing its University Sandbox data section")
+	var university:Dictionary = universitySchema.validateAndMigrate(data[UniversitySaveSchema.SECTION_KEY])
+	if(!university["ok"]):
+		return makeValidationFailure(university["error"])
+	for warningText in university["warnings"]:
+		Log.warning("Warning: "+str(warningText))
+	return {"ok": true, "error": "", "university": university["section"]}
+
+func makeValidationFailure(message:String) -> Dictionary:
+	return {"ok": false, "error": message, "university": {}}
+
+func getLastLoadError() -> String:
+	return lastLoadError
+
+func rejectLoad(message:String):
+	lastLoadError = message
+	Log.printerr("Error: Save was not loaded: "+message)
+
+func loadData(data: Dictionary):
+	var _loaded = tryLoadData(data)
+
+# Returns false (and changes nothing) if the save fails validation.
+func tryLoadData(data) -> bool:
+	var validation:Dictionary = validateSaveData(data)
+	if(!validation["ok"]):
+		rejectLoad(validation["error"])
+		return false
+	lastLoadError = ""
+	
+	loadedSavefileVersion = int(data["savefile_version"])
 		
 	GlobalRegistry.currentUniqueID = SAVE.loadVar(data, "currentUniqueID_DONT_TOUCH", 0)
 	GlobalRegistry.currentChildUniqueID = SAVE.loadVar(data, "currentChildUniqueID_DONT_TOUCH", 0)
@@ -60,10 +109,12 @@ func loadData(data: Dictionary):
 	GM.main.loadData(SAVE.loadVar(data, "main", {}))
 	GM.main.updateStaticCharacters()
 	GM.main.loadCharactersData(SAVE.loadVar(data, "characters", {}))
+	GM.main.university.loadData(validation["university"])
 	
 	# post loading refresh
 	GM.main.loadingSavefileFinished()
 	GM.ui.loadingSavefileFinished()
+	return true
 	
 func canSave():
 	return GM.main.canSave()
@@ -100,8 +151,11 @@ func loadSaveInfoCacheFromFile():
 	if(!saveData.has("version") || !saveData.has("saves")):
 		Log.printerr("Save info cache is not valid")
 		return
-	if(saveData["version"] != 1):
-		Log.printerr("Unsupported save info cache version")
+	if(saveData["version"] != SAVE_INFO_CACHE_VERSION):
+		Log.print("Save info cache version changed, it will be rebuilt")
+		return
+	if(!(saveData["saves"] is Dictionary)):
+		Log.printerr("Save info cache is not valid")
 		return
 	saveInfoCache = saveData["saves"]
 
@@ -109,7 +163,7 @@ func saveInfoCacheToFile():
 	var save_game = File.new()
 	save_game.open(saveInfoCachePath, File.WRITE)
 	save_game.store_line(JSON.print({
-		version = 1,
+		version = SAVE_INFO_CACHE_VERSION,
 		saves = saveInfoCache,
 	}, "\t", true))
 	save_game.close()
@@ -143,36 +197,62 @@ func saveGameRelative(_name):
 	GlobalRegistry.currentSave += 1
 	saveGame("user://saves/"+_name+".save")
 	
-func loadGame(_path):
+# Reads and parses a save file without applying it. Never modifies the file.
+# Returns {"ok": bool, "error": String, "data": parsed JSON or null}.
+func readSaveFile(_path) -> Dictionary:
 	var save_game = File.new()
-	if not save_game.file_exists(_path):
-		Log.error("Save file is not found in "+str(_path))
-		#assert(false, "Save file is not found in "+str(_path))
-		return # Error! We don't have a save to load.
-	
-	save_game.open(_path, File.READ)
-	#var saveData = parse_json(save_game.get_as_text())
-	var jsonResult = JSON.parse(save_game.get_as_text())
-	if(jsonResult.error != OK):
-		assert(false, "Trying to load a bad save file "+str(_path))
-		return
-	
-	var saveData = jsonResult.result
-	loadData(saveData)
+	if(!save_game.file_exists(_path)):
+		return {"ok": false, "error": "Save file is not found in "+str(_path), "data": null}
+	if(save_game.open(_path, File.READ) != OK):
+		return {"ok": false, "error": "Save file can't be opened: "+str(_path), "data": null}
+	var text:String = save_game.get_as_text()
 	save_game.close()
+	var jsonResult = JSON.parse(text)
+	if(jsonResult.error != OK):
+		return {"ok": false, "error": "Save file is not valid JSON: "+str(_path), "data": null}
+	return {"ok": true, "error": "", "data": jsonResult.result}
+
+# Read + validate without applying anything. "data" is null when the file couldn't be parsed.
+func inspectSaveFile(_path) -> Dictionary:
+	var readResult:Dictionary = readSaveFile(_path)
+	if(!readResult["ok"]):
+		return {"ok": false, "error": readResult["error"], "data": null}
+	var validation:Dictionary = validateSaveData(readResult["data"])
+	return {"ok": validation["ok"], "error": validation["error"], "data": readResult["data"]}
+
+func loadGame(_path):
+	var _loaded = tryLoadGame(_path)
+
+# Returns false (and changes nothing in the running game) if the file can't be read or fails validation.
+func tryLoadGame(_path) -> bool:
+	var readResult:Dictionary = readSaveFile(_path)
+	if(!readResult["ok"]):
+		rejectLoad(readResult["error"])
+		return false
+	return tryLoadData(readResult["data"])
 
 func switchToGameAndLoad(_path):
-	var _ok = get_tree().change_scene("res://Game/MainScene.tscn")
-	yield(get_tree(),"idle_frame")
-	call_deferred("loadGame", _path)
-
-func switchToGameAndResumeLatestSave():
-	var saves: Array = getSavesSortedByDate()
-	if(saves.size() == 0):
+	# Validate before leaving the menu: MainScene starts a fresh game when it opens.
+	var inspection:Dictionary = inspectSaveFile(_path)
+	if(!inspection["ok"]):
+		rejectLoad(inspection["error"])
 		return
 	var _ok = get_tree().change_scene("res://Game/MainScene.tscn")
 	yield(get_tree(),"idle_frame")
-	call_deferred("loadGame", saves[0])
+	call_deferred("loadGameAfterSceneSwitch", _path)
+
+func switchToGameAndResumeLatestSave():
+	var latestSave:String = getLatestLoadableSavePath()
+	if(latestSave == ""):
+		return
+	var _ok = get_tree().change_scene("res://Game/MainScene.tscn")
+	yield(get_tree(),"idle_frame")
+	call_deferred("loadGameAfterSceneSwitch", latestSave)
+
+func loadGameAfterSceneSwitch(_path):
+	if(!tryLoadGame(_path)):
+		# The file changed or broke after it was checked. Don't leave the player in the fresh game silently.
+		var _ok = get_tree().change_scene("res://UI/MainMenu/MainMenu.tscn")
 
 func getLoadedSavefileVersion():
 	return loadedSavefileVersion
@@ -244,7 +324,8 @@ func makeQuickSave():
 	saveGame("user://saves/quicksave.save")
 
 func loadQuickSave():
-	loadGame("user://saves/quicksave.save")
+	if(!tryLoadGame("user://saves/quicksave.save") && GM.ui != null):
+		GM.ui.say("\n\n[center][i]Quickload failed: "+lastLoadError.replace("[", "[lb]")+"[/i][/center]\n")
 
 var isAutoSaving = false
 func triggerAutosave():
@@ -296,10 +377,15 @@ func getAllSavePaths():
 	return saves
 
 func canResumeGame():
-	var saves = getAllSavePaths()
-	if(saves.size() > 0):
-		return true
-	return false
+	return getLatestLoadableSavePath() != ""
+
+# Newest save that passes validation, or "" if there is none.
+func getLatestLoadableSavePath() -> String:
+	for path in getSavesSortedByDate():
+		var info = loadGameInformationFromSave(path)
+		if(info is Dictionary && info.get("error", "") == ""):
+			return path
+	return ""
 
 func customSavePathComparison(a, b):
 	return a[1] > b[1]
@@ -329,40 +415,25 @@ func loadGameInformationFromSave(_path):
 		triggerSaveCacheSave()
 	return theInfo
 
+# Returns null if the file can't be read or parsed, {"error": reason} if it isn't loadable,
+# otherwise the summary shown in the save list (with "error" = "").
 func loadGameInformationFromSaveRaw(_path):
-	var save_game = File.new()
-	if not save_game.file_exists(_path):
-		assert(false, "Save file is not found in "+str(_path))
+	var inspection:Dictionary = inspectSaveFile(_path)
+	if(inspection["data"] == null):
 		return null
+	if(!inspection["ok"]):
+		return {"error": inspection["error"]}
 	
-	save_game.open(_path, File.READ)
-	var jsonResult = JSON.parse(save_game.get_as_text())
-	if(jsonResult.error != OK):
-		return null
-
-	var data = jsonResult.result
-	
-	if(!data.has("savefile_version")):
-		Log.printerr("Error: Save file doesn't have a version in it. It might not be a savefile")
-		return null
-	if(data["savefile_version"] > currentSavefileVersion):
-		Log.printerr("Error: This savefile is not supported, sorry. Current supported version: "+str(currentSavefileVersion)+". Savefile version: "+data["savefile_version"])
-		return	null
-	
-	var playerName = data["player"]["gamename"]
-	var playerCredits = data["player"]["credits"]
-	var playerLocation = data["player"]["location"]
-	var gameDays = data["main"]["currentDay"]
-	var gameTimeOfDay = data["main"]["timeOfDay"]
-	
-	save_game.close()
-	
+	var data:Dictionary = inspection["data"]
+	var playerData:Dictionary = data["player"]
+	var mainData:Dictionary = data["main"]
 	return {
-		"gamename": playerName,
-		"credits": playerCredits,
-		"location": playerLocation,
-		"currentDay": gameDays,
-		"timeOfDay": gameTimeOfDay,
+		"error": "",
+		"gamename": playerData.get("gamename", "?"),
+		"credits": playerData.get("credits", 0),
+		"location": playerData.get("location", ""),
+		"currentDay": mainData.get("currentDay", 0),
+		"timeOfDay": mainData.get("timeOfDay", 0),
 	}
 
 func deleteSave(path):

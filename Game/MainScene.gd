@@ -35,6 +35,8 @@ var DrugDenRun:DrugDen
 var PS:PlayerSlaveryBase
 var PSH:PlayerSlaveryHolder = PlayerSlaveryHolder.new()
 var RCS:RecruitSystem = RecruitSystem.new()
+const UniversityState = preload("res://Game/University/UniversityState.gd")
+var university = UniversityState.new() # University Sandbox per-game save data, see Docs/SAVE_SCHEMA.md
 var MS:MissionSystem = MissionSystem.new()
 var MRH:MainRouteHistory = MainRouteHistory.new()
 

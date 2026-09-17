@@ -1,2 +1,46 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Godot 3 source and text resources: always LF in the working tree.
+# Godot writes these files with LF, so pinning LF stops Windows checkouts
+# (core.autocrlf) from reporting re-imported or re-saved files as modified.
+*.gd        text eol=lf
+*.tscn      text eol=lf
+*.tres      text eol=lf
+*.godot     text eol=lf
+*.import    text eol=lf
+*.cfg       text eol=lf
+*.shader    text eol=lf
+*.gdshader  text eol=lf
+
+# Other text files
+*.md        text
+*.txt       text
+*.json      text
+*.yml       text
+*.svg       text
+*.sh        text eol=lf
+*.ps1       text eol=crlf
+
+# Binary assets: never convert, never diff as text.
+# (.material is Godot's binary material format in this project.)
+*.png       binary
+*.jpg       binary
+*.jpeg      binary
+*.webp      binary
+*.ico       binary
+*.glb       binary
+*.blend     binary
+*.blend1    binary
+*.pdn       binary
+*.xcf       binary
+*.material  binary
+*.otf       binary
+*.ttf       binary
+*.woff      binary
+*.woff2     binary
+*.pck       binary
+*.zip       binary
+*.wav       binary
+*.ogg       binary
+*.mp3       binary
