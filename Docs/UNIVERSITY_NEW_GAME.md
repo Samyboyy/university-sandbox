@@ -145,6 +145,53 @@ In the dorm, they stay inert:
 - **No prison flags.** The route never sets `Player_Crime_Type` or `InmateType` flags, and never
   assigns `Game_CompletedPrologue`.
 
+## Durable human policy after onboarding (T4C)
+
+T4 guarantees a human player *during* onboarding. T4C keeps that true afterwards, for the
+**canonical University player only**: the original PC of a game holding a valid `student_profile`
+(`Player.isUniversityPlayerLocked()`). NPCs, player overrides, profile-free legacy/T3 games and all
+registries are unaffected.
+
+**Two layers.**
+
+1. **Player-only interception** (`Player/Player.gd`). Edited: `setSpecies()` (always resolves to
+   human), `resetBodypartsToDefaultFor()`, `applyTFData()` (canonicalise after), and `loadData()`
+   (marks `needsUniversityPolicySweep`; the profile isn't restored yet). Overridden from
+   `BaseCharacter`: `giveBodypart()` (substitutes the human default, or drops tail/horn attempts),
+   `removeBodypart()` (no callback, to avoid remove/refill recursion), `updateAppearance()` (the
+   guarded backstop and the atomic end of transformation write-back), plus
+   `applyBodypartsSkinData()`, `applyRandomSkin()`, `applyRandomSkinAndColors()`,
+   `applyRandomSkinAndColorsAndParts()` and `checkSkins()`.
+2. **Post-load sweep** (`Game/SaveManager.gd`). `applyUniversityPolicyAfterLoad()` runs right after
+   `GM.main.university.loadData(...)` and before `loadingSavefileFinished()`, because the player
+   payload is restored *before* University state.
+
+`enforcingUniversityPolicy` is the reentrancy guard: while the policy is mutating the player, the
+overrides call the inherited implementations directly. `enforceOnPlayer(character, refreshAppearance)`
+separates data correction from the visual refresh, so the inherited appearance update runs once per
+external call. Enforcement is a no-op when `getViolations()` is empty, so valid human choices —
+hairstyles, human skins and colours, femininity, thickness, male and female anatomy — are untouched.
+
+**Custom part-skins.** Ears, hair and penis parts use `pickedSkin` as a *part-skin* id. A non-null
+value is valid only if registered for that exact part (`GlobalRegistry.getPartSkins(part.id)`), so
+`humanearspierced`, human penis variants and hair highlight/fade/tip variants survive, while a
+foreign id such as a wolf-ear pattern is reset to `null`.
+
+**Non-human save payloads** are loaded and canonicalised, never rejected: structural validation
+(T3) still runs first, and repair happens before anything renders.
+
+**Transformation suppression.** For a University player, every registered transformation's
+`EncounterSettings` weight is set to `0.0` except `UniversityPlayablePolicy.ALLOWED_TRANSFORMATION_IDS`
+(initially empty), so `canStartTransformation()` refuses them and no animal transformation is ever
+narrated. Applied at onboarding and reapplied by the post-load sweep. Definitions are untouched and
+NPCs are unaffected. Suppression is not the boundary: already-running or directly applied
+transformations are still canonicalised.
+
+**Deferred task (T4D): equipment containment.** No reachable University-world path can equip
+restraints today (the dorm has no NPCs, pawns or prison events), so T4C adds no inventory guard. When
+campus NPCs and events arrive, add a University player equip guard for muzzles, collars, wrist and
+ankle restraints, cages and prison uniforms. Tests already assert none are equipped.
+
 ## Placeholders
 
 - The starter outfit reuses BDCC's shirt-and-shorts model.

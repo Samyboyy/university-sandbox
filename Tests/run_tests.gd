@@ -314,6 +314,8 @@ func phaseRegistry():
 	check(registry.bodyparts.size() > 0, "bodypart registry is populated", "> 0", registry.bodyparts.size())
 	check(registry.getModules().size() > 0, "module registry is populated", "> 0", registry.getModules().size())
 	check(registry.getAllSpecies().has("human"), "species registry contains 'human'", "has 'human'", registry.getAllSpecies().keys())
+	recorded["registryCounts"] = [registry.scenes.size(), registry.items.size(), registry.bodyparts.size(),
+		registry.getAllSpecies().size(), registry.getSkinsAllKeys().size(), registry.transformations.size()]
 	info("counts: scenes=" + str(registry.scenes.size()) + " items=" + str(registry.items.size())
 		+ " bodyparts=" + str(registry.bodyparts.size()) + " modules=" + str(registry.getModules().size())
 		+ " species=" + str(registry.getAllSpecies().size()))
@@ -662,7 +664,7 @@ func phaseUniversityRoute():
 		check(room.population == 0 && !room.canNorth && !room.canSouth && !room.canEast && !room.canWest, "dorm is private: no NPC population, no exits yet", "isolated", room.population)
 	check(save.canSave(), "saving is allowed in the dorm", true, save.canSave())
 	check(!gm.QS.isActive("EscapeQuest") && !gm.QS.isActive("WorkInMinesQuest") && gm.QS.getAllQuests().empty(), "no quests are active or listed after onboarding", {}, gm.QS.getAllQuests().keys())
-	nextStep(5)
+	phaseDurableHumanPolicy()
 
 
 func bodypartSummary() -> Dictionary:
@@ -677,6 +679,164 @@ func checkHumanPartsNow(context:String):
 	var gm = getNode("GM")
 	var policy = load(POLICY_PATH).new()
 	check(gm.pc.getSpecies() == ["human"] && policy.getViolations(gm.pc).empty(), "player stays human and compliant " + context, [], policy.getViolations(gm.pc))
+
+
+# ---------------------------------------------------------------- T4C: durable human policy
+
+const NON_HUMAN_ATTEMPTS := [
+	["head", "felinehead"], ["head", "caninehead"], ["ears", "felineears"], ["ears", "wolfears"],
+	["tail", "felinetail"], ["horns", "demonhorns"], ["legs", "digilegs"], ["legs", "hoofs"],
+	["penis", "caninepenis"], ["penis", "dragonpenis"], ["vagina", "vaginaEggs"],
+	["anus", "anusEggs"],
+]
+const ESSENTIAL_SLOTS := ["head", "hair", "ears", "body", "arms", "breasts", "anus", "legs"] # BodypartSlot.isEssential, inlined: the class can't be resolved at harness compile time
+const FUR_SKIN_ID := "StripesSkin"
+const FOREIGN_EAR_PART_SKIN := "wolfearstribal"
+const FOREIGN_PENIS_PART_SKIN := "tribalcanine"
+const HUMAN_EAR_PART_SKIN := "humanearspierced"
+const HUMAN_PENIS_PART_SKIN := "humanscarred"
+const SUPPRESSED_TF_ID := "SpeciesTF"
+
+
+func policyViolations() -> Array:
+	return load(POLICY_PATH).new().getViolations(getNode("GM").pc)
+
+
+func nonHumanPartsNow() -> Array:
+	var gm = getNode("GM")
+	var found:Array = []
+	for slot in gm.pc.getBodyparts().keys():
+		var part = gm.pc.getBodypart(slot)
+		if(part != null && part.id in NON_HUMAN_BODYPART_IDS):
+			found.append(part.id)
+	return found
+
+
+func firstNonHumanNPC():
+	var gm = getNode("GM")
+	for charID in gm.main.getCharacters().keys():
+		var npc = gm.main.getCharacter(charID)
+		if(npc == null || npc == gm.pc):
+			continue
+		if(!("human" in npc.getSpecies())):
+			return npc
+	return null
+
+
+func phaseDurableHumanPolicy():
+	var gm = getNode("GM")
+	var save = getNode("SAVE")
+	var registry = getNode("GlobalRegistry")
+	var policy = load(POLICY_PATH).new()
+
+	beginPhase("Phase 4h: durable human policy - the player is locked")
+	check(gm.pc.isUniversityPlayerLocked(), "the University player is policy-locked after onboarding", true, gm.pc.isUniversityPlayerLocked())
+	check(gm.main.getOverriddenPC() == null, "no player override exists in the University route", null, gm.main.getOverriddenPC())
+
+	beginPhase("Phase 4i: programmatic non-human mutations are canonicalised")
+	gm.pc.setSpecies(["feline"])
+	check(gm.pc.getSpecies() == ["human"], "setSpecies(feline) resolves to human", ["human"], gm.pc.getSpecies())
+
+	for attempt in NON_HUMAN_ATTEMPTS:
+		var slot:String = attempt[0]
+		var partID:String = attempt[1]
+		var newPart = registry.createBodypart(partID)
+		if(newPart == null):
+			continue
+		gm.pc.giveBodypart(newPart)
+		gm.pc.updateAppearance()
+		var resultID = gm.pc.getBodypart(slot).id if gm.pc.hasBodypart(slot) else "none"
+		check(resultID != partID && policy.isBodypartAllowed(slot, resultID if resultID != "none" else null) || resultID == "none",
+			"giveBodypart(" + partID + ") leaves an allowed part or nothing", "not " + partID, resultID)
+		if(slot in ["tail", "horns"]):
+			check(!gm.pc.hasBodypart(slot), partID + " leaves the " + slot + " slot empty", false, gm.pc.hasBodypart(slot))
+		if(slot in ESSENTIAL_SLOTS):
+			check(gm.pc.hasBodypart(slot), "essential slot " + slot + " is not left empty", true, gm.pc.hasBodypart(slot))
+	check(policyViolations().empty() && nonHumanPartsNow().empty(), "no violations after all bodypart attempts", [], policyViolations() + nonHumanPartsNow())
+	# No non-human arm/paw part is registered in this codebase, so the arms slot can only be
+	# attacked with parts the allowlist already covers. Assert that stays true.
+	var unlistedArms:Array = []
+	for armsID in registry.getBodypartsIdsBySlot("arms"):
+		if(!policy.isBodypartAllowed("arms", armsID)):
+			unlistedArms.append(armsID)
+	check(unlistedArms.empty(), "every registered arms part is on the human allowlist (no paws exist)", [], unlistedArms)
+
+	gm.pc.pickedSkin = FUR_SKIN_ID
+	gm.pc.updateAppearance()
+	check(policy.isSkinAllowed(gm.pc.pickedSkin), "a fur base skin written directly is normalised", "allowed skin", gm.pc.pickedSkin)
+	gm.pc.applyRandomSkinAndColorsAndParts()
+	check(policyViolations().empty(), "applyRandomSkinAndColorsAndParts leaves a compliant player", [], policyViolations())
+
+	beginPhase("Phase 4j: custom part-skins")
+	gm.pc.getBodypart("ears").pickedSkin = FOREIGN_EAR_PART_SKIN
+	gm.pc.updateAppearance()
+	check(gm.pc.getBodypart("ears").pickedSkin != FOREIGN_EAR_PART_SKIN, "a foreign ear part-skin is reset", "not " + FOREIGN_EAR_PART_SKIN, gm.pc.getBodypart("ears").pickedSkin)
+	if(gm.pc.hasBodypart("penis")):
+		gm.pc.getBodypart("penis").pickedSkin = FOREIGN_PENIS_PART_SKIN
+		gm.pc.updateAppearance()
+		check(gm.pc.getBodypart("penis").pickedSkin != FOREIGN_PENIS_PART_SKIN, "a foreign penis part-skin is reset", "not " + FOREIGN_PENIS_PART_SKIN, gm.pc.getBodypart("penis").pickedSkin)
+		gm.pc.getBodypart("penis").pickedSkin = HUMAN_PENIS_PART_SKIN
+		gm.pc.updateAppearance()
+		check(gm.pc.getBodypart("penis").pickedSkin == HUMAN_PENIS_PART_SKIN, "a registered human penis part-skin survives", HUMAN_PENIS_PART_SKIN, gm.pc.getBodypart("penis").pickedSkin)
+	gm.pc.getBodypart("ears").pickedSkin = HUMAN_EAR_PART_SKIN
+	gm.pc.updateAppearance()
+	check(gm.pc.getBodypart("ears").pickedSkin == HUMAN_EAR_PART_SKIN, "humanearspierced survives enforcement", HUMAN_EAR_PART_SKIN, gm.pc.getBodypart("ears").pickedSkin)
+
+	beginPhase("Phase 4k: transformations")
+	check(!gm.pc.getTFHolder().canStartTransformation(SUPPRESSED_TF_ID), "inherited transformations can't start (suppressed weight)", false, gm.pc.getTFHolder().canStartTransformation(SUPPRESSED_TF_ID))
+	check(gm.main.getEncounterSettings().getTFWeight(SUPPRESSED_TF_ID) == 0.0, "transformation weight is suppressed", 0.0, gm.main.getEncounterSettings().getTFWeight(SUPPRESSED_TF_ID))
+	gm.pc.applyTFData({"species": ["canine"], "pickedSkin": FUR_SKIN_ID})
+	check(gm.pc.getSpecies() == ["human"] && policy.isSkinAllowed(gm.pc.pickedSkin), "a canine applyTFData payload is canonicalised", ["human"], gm.pc.getSpecies())
+
+	# Force a complete inherited transformation through the production TF holder.
+	gm.main.getEncounterSettings().setTFWeight(SUPPRESSED_TF_ID, 1.0)
+	var startedTF = gm.pc.getTFHolder().startTransformation(SUPPRESSED_TF_ID, {species = ["canine"]})
+	check(startedTF != null, "the transformation starts once its weight is restored (production gate works)", "started", startedTF)
+	if(startedTF != null):
+		gm.pc.getTFHolder().forceProgressAll()
+		gm.pc.getTFHolder().applyAllTransformationEffects()
+		check(gm.pc.getSpecies() == ["human"] && policyViolations().empty() && nonHumanPartsNow().empty(),
+			"a completed canine transformation leaves a compliant human", [], policyViolations() + nonHumanPartsNow())
+		gm.pc.getTFHolder().undoAllTransformations()
+	var _resuppressed = policy.suppressTransformationsFor(gm.main.getEncounterSettings())
+	check(gm.main.getEncounterSettings().getTFWeight(SUPPRESSED_TF_ID) == 0.0, "suppression can be reapplied", 0.0, gm.main.getEncounterSettings().getTFWeight(SUPPRESSED_TF_ID))
+
+	beginPhase("Phase 4l: console become and NPC scope")
+	var npc = firstNonHumanNPC()
+	check(npc != null, "a non-human NPC exists to test scope", "an NPC", npc)
+	if(npc != null):
+		var npcSpecies:Array = npc.getSpecies()
+		var npcTail = registry.createBodypart("felinetail")
+		npc.giveBodypart(npcTail)
+		check(npc.getSpecies() == npcSpecies && npc.hasBodypart("tail"), "an NPC keeps its non-human species and can gain a tail", npcSpecies, npc.getSpecies())
+		npc.removeBodypart("tail")
+		gm.main.consoleBecome(npc.getID() if npc.has_method("getID") else "")
+		check(gm.pc.getSpecies() == ["human"] && policyViolations().empty() && nonHumanPartsNow().empty(),
+			"consoleBecome(non-human NPC) leaves a compliant human player", [], policyViolations() + nonHumanPartsNow())
+
+	beginPhase("Phase 4m: valid customisation survives, male state restored")
+	gm.pc.setFemininity(30)
+	gm.pc.setThickness(60)
+	gm.pc.pickedSkin = "HumanSkin"
+	gm.pc.pickedSkinRColor = Color("aa8866")
+	gm.pc.updateAppearance()
+	check(gm.pc.pickedSkin == "HumanSkin" && gm.pc.getFemininity() == 30 && gm.pc.getThickness() == 60 && gm.pc.pickedSkinRColor.to_html(false) == Color("aa8866").to_html(false),
+		"human skin, colours, femininity and thickness survive enforcement", "unchanged", [gm.pc.pickedSkin, gm.pc.getFemininity(), gm.pc.getThickness()])
+	# Restore the expected male production-test state for the save phases.
+	gm.pc.setGender(Gender.Male)
+	gm.pc.setPronounGender(Gender.Male)
+	gm.pc.resetBodypartsToDefault()
+	gm.pc.giveBodypart(registry.createBodypart("longhair"))
+	gm.pc.getInventory().clear()
+	for itemID in ["UniversityStarterClothes", "plainBriefs"]:
+		var _equipped = gm.pc.getInventory().equipItem(registry.createItem(itemID))
+	gm.pc.setFemininity(0)
+	gm.pc.updateAppearance()
+	check(policyViolations().empty(), "restored male state is compliant", [], policyViolations())
+	checkMaleStudent("after the durable-policy tests")
+	check(!gm.pc.getInventory().hasRemovableRestraints(), "no restraints after the mutation tests", false, gm.pc.getInventory().hasRemovableRestraints())
+	check(save.canSave(), "saving still allowed after the mutation tests", true, save.canSave())
+	nextStep(5)
 
 
 func phaseNewGameAndSave():
@@ -926,6 +1086,68 @@ func phaseRejections():
 	check(!gm.main.university.hasSystemData(PROFILE_SYSTEM_ID) && gm.main.university.hasSystemData(PROBE_SYSTEM_ID),
 		"it loads with its other University data and no profile", "probe only", gm.main.university.saveData()["systems"].keys())
 	check(gm.QS.getAllQuests().has("EscapeQuest"), "without a profile the game isn't treated as University-route (legacy quests listed)", true, gm.QS.getAllQuests().has("EscapeQuest"))
+	check(!gm.pc.isUniversityPlayerLocked(), "a profile-free player is not policy-locked", false, gm.pc.isUniversityPlayerLocked())
+	check(!gm.pc.needsUniversityPolicySweep, "the deferred sweep flag is cleared after loading", false, gm.pc.needsUniversityPolicySweep)
+	# Legacy freedom is proven by mutation, not by TF weights: this fixture inherits the
+	# University save's suppressed weights, which say nothing about legacy behaviour.
+	gm.pc.setSpecies(["feline"])
+	var legacyTail = getNode("GlobalRegistry").createBodypart("felinetail")
+	gm.pc.giveBodypart(legacyTail)
+	gm.pc.giveBodypart(getNode("GlobalRegistry").createBodypart("digilegs"))
+	gm.pc.updateAppearance()
+	check(gm.pc.getSpecies() == ["feline"] && gm.pc.hasBodypart("tail") && gm.pc.getBodypart("legs").id == "digilegs",
+		"a profile-free legacy player can become feline with a tail and digitigrade legs", "unrestricted",
+		[gm.pc.getSpecies(), gm.pc.hasBodypart("tail"), gm.pc.getBodypart("legs").id])
+
+	beginPhase("Phase 6b2: loading a profile-free non-human legacy save from a live University game")
+	# Restore a valid University game first, so GM.main.university holds a valid profile while
+	# the incoming (profile-free) player payload is deserialised. Without Player.loadingPlayerData
+	# the stale profile would canonicalise the incoming legacy body.
+	var _restored = save.tryLoadGame(TEST_SAVE_PATH)
+	check(gm.pc.isUniversityPlayerLocked(), "a live University game is active before the transition", true, gm.pc.isUniversityPlayerLocked())
+	var legacySave:Dictionary = validSave.duplicate(true)
+	var _droppedProfile = legacySave["university"]["systems"].erase(PROFILE_SYSTEM_ID)
+	legacySave["player"]["pickedSpecies"] = ["feline"]
+	legacySave["player"]["pickedSkin"] = FUR_SKIN_ID
+	legacySave["player"]["bodyparts"]["legs"] = {"id": "digilegs"}
+	legacySave["player"]["bodyparts"]["head"] = {"id": "felinehead"}
+	legacySave["player"]["bodyparts"]["tail"] = {"id": "felinetail"}
+	var legacyPath:String = REJECT_SAVE_PREFIX + "legacy_nonhuman_no_profile.save"
+	check(isInsideTestRoot(ProjectSettings.globalize_path(legacyPath)) && writeTextFile(legacyPath, JSON.print(legacySave, "\t")),
+		"legacy fixture is written inside the test root", testRoot + "/...", ProjectSettings.globalize_path(legacyPath))
+	var legacyLoaded:bool = save.tryLoadGame(legacyPath)
+	check(legacyLoaded && save.getLastLoadError() == "", "the profile-free non-human legacy save loads", true, save.getLastLoadError())
+	check(!gm.main.university.hasSystemData(PROFILE_SYSTEM_ID), "no valid University profile is active after the transition", false, gm.main.university.hasSystemData(PROFILE_SYSTEM_ID))
+	check(!gm.pc.isUniversityPlayerLocked(), "University policy is inactive for the loaded legacy player", false, gm.pc.isUniversityPlayerLocked())
+	check(gm.pc.getSpecies() == ["feline"], "serialized feline species survived the load", ["feline"], gm.pc.getSpecies())
+	check(gm.pc.hasBodypart("tail") && gm.pc.getBodypart("head").id == "felinehead" && gm.pc.getBodypart("legs").id == "digilegs",
+		"serialized feline head, tail and digitigrade legs survived the load", "feline body",
+		[gm.pc.hasBodypart("tail"), gm.pc.getBodypart("head").id, gm.pc.getBodypart("legs").id])
+	check(gm.pc.pickedSkin == FUR_SKIN_ID, "serialized fur skin survived the load", FUR_SKIN_ID, gm.pc.pickedSkin)
+	check(!gm.pc.loadingPlayerData, "the player load guard is cleared", false, gm.pc.loadingPlayerData)
+	check(!gm.pc.needsUniversityPolicySweep, "no deferred sweep remains pending after the post-load hook", false, gm.pc.needsUniversityPolicySweep)
+
+	beginPhase("Phase 6c: a University save with a non-human player payload is repaired on load")
+	var brokenSave:Dictionary = validSave.duplicate(true)
+	brokenSave["player"]["pickedSpecies"] = ["canine"]
+	brokenSave["player"]["pickedSkin"] = FUR_SKIN_ID
+	brokenSave["player"]["bodyparts"]["legs"] = {"id": "digilegs"}
+	brokenSave["player"]["bodyparts"]["tail"] = {"id": "felinetail"}
+	brokenSave["player"]["bodyparts"]["head"] = {"id": "felinehead"}
+	var brokenPath:String = REJECT_SAVE_PREFIX + "nonhuman_payload.save"
+	check(isInsideTestRoot(ProjectSettings.globalize_path(brokenPath)) && writeTextFile(brokenPath, JSON.print(brokenSave, "\t")),
+		"non-human payload fixture is written inside the test root", testRoot + "/...", ProjectSettings.globalize_path(brokenPath))
+	check(save.validateSaveData(brokenSave)["ok"], "the save is structurally accepted (not rejected for a non-human payload)", true, save.validateSaveData(brokenSave)["error"])
+	var repairedLoad:bool = save.tryLoadGame(brokenPath)
+	check(repairedLoad && save.getLastLoadError() == "", "the non-human University save loads", true, save.getLastLoadError())
+	checkHumanDormPlayer("after loading a non-human payload")
+	check(!gm.pc.hasBodypart("tail") && gm.pc.getBodypart("legs").id != "digilegs" && gm.pc.getBodypart("head").id != "felinehead",
+		"the post-load sweep removed the non-human parts", "human parts", [gm.pc.hasBodypart("tail"), gm.pc.getBodypart("legs").id, gm.pc.getBodypart("head").id])
+	check(!gm.pc.needsUniversityPolicySweep, "the deferred sweep flag is cleared after the repair", false, gm.pc.needsUniversityPolicySweep)
+	check(gm.main.getEncounterSettings().getTFWeight(SUPPRESSED_TF_ID) == 0.0, "transformation suppression is reapplied on load", 0.0, gm.main.getEncounterSettings().getTFWeight(SUPPRESSED_TF_ID))
+	check(gm.pc.getBodypart("hair").id == "longhair", "valid human customisation from the save survives the repair", "longhair", gm.pc.getBodypart("hair").id)
+	check(equippedItemIDs() == sortedArray(STARTER_ITEMS_MALE) && !gm.pc.getInventory().hasRemovableRestraints(), "outfit intact and no restraints after the repair", sortedArray(STARTER_ITEMS_MALE), equippedItemIDs())
+	check(sceneIDsOf(gm.main.sceneStack) == recorded["sceneIDs"], "scene stack is correct after the repair", recorded["sceneIDs"], sceneIDsOf(gm.main.sceneStack))
 
 	# Main-menu load path: must refuse before leaving the current scene.
 	recorded["sceneBeforeMenuLoad"] = current_scene.get_instance_id()
@@ -959,4 +1181,8 @@ func phaseVerifyFinalLoad():
 	check(sceneIDsOf(gm.main.sceneStack) == recorded["sceneIDs"], "scene stack restored by the final load", recorded["sceneIDs"], sceneIDsOf(gm.main.sceneStack))
 	checkHumanDormPlayer("after the final load")
 	checkMaleStudent("after the final load")
+	var registry = getNode("GlobalRegistry")
+	var finalCounts:Array = [registry.scenes.size(), registry.items.size(), registry.bodyparts.size(),
+		registry.getAllSpecies().size(), registry.getSkinsAllKeys().size(), registry.transformations.size()]
+	check(finalCounts == recorded["registryCounts"], "registry species, bodypart, skin and transformation counts are unchanged", recorded["registryCounts"], finalCounts)
 	finishRun()

@@ -110,6 +110,9 @@ func tryLoadData(data) -> bool:
 	GM.main.updateStaticCharacters()
 	GM.main.loadCharactersData(SAVE.loadVar(data, "characters", {}))
 	GM.main.university.loadData(validation["university"])
+	# University Sandbox: University state exists only now, so the durable human policy runs
+	# here - after the player payload is restored and before anything renders it.
+	var _universityCorrections = GM.main.getOriginalPC().applyUniversityPolicyAfterLoad()
 	
 	# post loading refresh
 	GM.main.loadingSavefileFinished()

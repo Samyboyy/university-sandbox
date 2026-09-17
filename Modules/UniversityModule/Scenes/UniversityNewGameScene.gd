@@ -26,6 +26,8 @@ func _init():
 
 func _initScene(_args = []):
 	studentProfile.begin(GM.main.university)
+	# Inherited (prison/furry) transformations can't start for the University player.
+	var _suppressed = policy.suppressTransformationsFor(GM.main.getEncounterSettings())
 	GM.pc.setLocation(StudentProfile.DORM_ROOM_ID)
 	GM.pc.setSpecies(policy.getPlayerSpecies())
 	GM.pc.resetBodypartsToDefault()

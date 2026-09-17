@@ -42,6 +42,9 @@ const ALLOWED_BODYPARTS := {
 
 # Base skins with no fur, scale or fantasy pattern. Skin colours stay fully customisable.
 const ALLOWED_SKINS := ["HumanSkin", "EmptySkin"]
+# Transformations the University player may start. Everything else registered is suppressed
+# through EncounterSettings TF weights (see suppressTransformationsFor()).
+const ALLOWED_TRANSFORMATION_IDS := []
 const DEFAULT_SKIN := "EmptySkin"
 
 # Player-facing labels that would otherwise expose BDCC/anthro terminology.
@@ -86,6 +89,17 @@ func getAllowedBodypartIDs(slot) -> Array:
 			result.append(bodypartID)
 	return result
 
+# Parts with a custom skin pattern (ears, hair, penis) use pickedSkin as a *part skin* id from
+# that exact part's registered table: colour, piercing, tattoo and scar variants, not fur.
+# Any id not registered for that part (e.g. a wolf-ear pattern on human ears) is foreign.
+func isPartSkinAllowed(bodypart) -> bool:
+	if(bodypart == null || bodypart.pickedSkin == null):
+		return true
+	if(bodypart.hasCustomSkinPattern()):
+		return GlobalRegistry.getPartSkins(bodypart.id).has(bodypart.pickedSkin)
+	return isSkinAllowed(bodypart.pickedSkin)
+
+
 func isSkinAllowed(skinID) -> bool:
 	return skinID is String && skinID in ALLOWED_SKINS
 
@@ -115,7 +129,7 @@ func getViolations(character) -> Array:
 			continue
 		if(!isBodypartAllowed(slot, bodypart.id)):
 			result.append("bodypart '" + str(bodypart.id) + "' is not allowed in slot '" + str(slot) + "'")
-		elif(bodypart.pickedSkin != null && !bodypart.hasCustomSkinPattern() && !isSkinAllowed(bodypart.pickedSkin)):
+		elif(!isPartSkinAllowed(bodypart)):
 			result.append("bodypart '" + str(bodypart.id) + "' uses skin '" + str(bodypart.pickedSkin) + "'")
 	for slot in getOfferedSlots():
 		if(BodypartSlot.isEssential(slot) && !character.hasBodypart(slot)):
@@ -127,7 +141,7 @@ func getViolations(character) -> Array:
 # Forces the player into policy: human species, allowed parts and skins.
 # Disallowed parts are replaced with the human default for that slot, or removed
 # when the slot is not offered (tails, horns). Returns the corrections made.
-func enforceOnPlayer(character) -> Array:
+func enforceOnPlayer(character, refreshAppearance:bool = true) -> Array:
 	var corrections:Array = []
 	if(character.getSpecies() != getPlayerSpecies()):
 		corrections.append("species " + str(character.getSpecies()) + " -> " + str(getPlayerSpecies()))
@@ -158,7 +172,7 @@ func enforceOnPlayer(character) -> Array:
 
 	for slot in character.getBodyparts().keys():
 		var part = character.getBodypart(slot)
-		if(part != null && part.pickedSkin != null && !part.hasCustomSkinPattern() && !isSkinAllowed(part.pickedSkin)):
+		if(part != null && !isPartSkinAllowed(part)):
 			corrections.append("bodypart " + str(part.id) + " skin " + str(part.pickedSkin) + " -> base")
 			part.pickedSkin = null
 
@@ -166,6 +180,22 @@ func enforceOnPlayer(character) -> Array:
 		corrections.append("base skin " + str(character.pickedSkin) + " -> " + DEFAULT_SKIN)
 		character.pickedSkin = DEFAULT_SKIN
 
-	if(!corrections.empty()):
+	if(!corrections.empty() && refreshAppearance):
 		character.updateAppearance()
 	return corrections
+
+
+# University games don't start inherited (prison/furry) transformations. The definitions stay
+# registered and NPCs are unaffected; only the player-side start gate
+# (TFHolder.canStartTransformation -> EncounterSettings.getTFWeight) is set to zero.
+func suppressTransformationsFor(encounterSettings) -> int:
+	if(encounterSettings == null):
+		return 0
+	var suppressed:int = 0
+	for transformationID in GlobalRegistry.transformations.keys():
+		if(transformationID in ALLOWED_TRANSFORMATION_IDS):
+			continue
+		if(encounterSettings.getTFWeight(transformationID) != 0.0):
+			encounterSettings.setTFWeight(transformationID, 0.0)
+			suppressed += 1
+	return suppressed

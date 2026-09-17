@@ -349,16 +349,151 @@ func getChatColor():
 	
 	return "red"
 
+# --- University Sandbox durable human policy (T4C) -------------------------------------
+# The canonical University player (the original PC of a game with a valid student_profile)
+# must stay human after onboarding, whatever inherited code tries to do to it. NPCs, player
+# overrides and profile-free legacy games are untouched. See Docs/UNIVERSITY_NEW_GAME.md.
+# Loaded lazily with load(): preloading here creates a cyclic reference through GlobalRegistry.
+const UNIVERSITY_POLICY_PATH := "res://Game/University/UniversityPlayablePolicy.gd"
+const UNIVERSITY_PROFILE_PATH := "res://Game/University/UniversityStudentProfile.gd"
+
+var universityPolicy = null
+var universityProfile = null
+var enforcingUniversityPolicy:bool = false # reentrancy guard: policy is mutating us right now
+var needsUniversityPolicySweep:bool = false # set by loadData(), cleared by the post-load sweep
+# True only while loadData() is running. GM.main.university still holds the PREVIOUS game's
+# state at that point, so consulting it would judge the incoming payload against a stale
+# profile (and wrongly canonicalise a profile-free legacy save loaded from a University game).
+var loadingPlayerData:bool = false
+
+# True only for the canonical University player. Null-safe: false during _ready(), before
+# GM.main exists, during the player phase of loading (the profile isn't restored yet) and
+# for player overrides.
+func getUniversityPolicy():
+	if(universityPolicy == null):
+		universityPolicy = load(UNIVERSITY_POLICY_PATH).new()
+	return universityPolicy
+
+func getUniversityProfile():
+	if(universityProfile == null):
+		universityProfile = load(UNIVERSITY_PROFILE_PATH).new()
+	return universityProfile
+
+func isUniversityPlayerLocked() -> bool:
+	if(loadingPlayerData):
+		return false # the incoming profile isn't loaded yet; SaveManager's post-load sweep decides
+	if(GM.main == null || !is_instance_valid(GM.main)):
+		return false
+	if(GM.main.get("university") == null):
+		return false
+	if(self != GM.main.getOriginalPC()):
+		return false
+	return getUniversityProfile().isUniversityGame(GM.main.university)
+
+# Canonicalises data without refreshing appearance. Safe to call repeatedly: it is a no-op
+# when nothing violates the policy.
+func canonicaliseForUniversity() -> Array:
+	if(enforcingUniversityPolicy):
+		return []
+	enforcingUniversityPolicy = true
+	var corrections:Array = getUniversityPolicy().enforceOnPlayer(self, false)
+	enforcingUniversityPolicy = false
+	return corrections
+
+# Post-load sweep, called by SaveManager once University state has been restored.
+func applyUniversityPolicyAfterLoad() -> Array:
+	needsUniversityPolicySweep = false
+	if(!isUniversityPlayerLocked()):
+		return [] # profile-free legacy/T3 game: unrestricted, and no TF weights touched
+	var corrections:Array = canonicaliseForUniversity()
+	if(!corrections.empty()):
+		updateAppearance()
+	if(GM.main.getEncounterSettings() != null):
+		var _suppressed = getUniversityPolicy().suppressTransformationsFor(GM.main.getEncounterSettings())
+	return corrections
+# --------------------------------------------------------------------------------------
+
 func getSpecies():
 	return pickedSpecies
 
 func setSpecies(species: Array):
+	# University: the canonical player is always human.
+	if(!enforcingUniversityPolicy && isUniversityPlayerLocked()):
+		species = getUniversityPolicy().getPlayerSpecies()
 	pickedSpecies = species
 	pickedSpecies.sort()
 	emit_signal("stat_changed")
 
 func resetBodypartsToDefault():
 	resetBodypartsToDefaultFor(getSpecies())
+
+# Replaces a disallowed part with the human default for its slot, or drops it when the slot
+# isn't offered (tail, horns). Returns null when the part should not be applied at all.
+func universitySubstituteBodypart(bodypart):
+	if(bodypart == null):
+		return null
+	var slot = bodypart.getSlot()
+	if(getUniversityPolicy().isBodypartAllowed(slot, bodypart.id)):
+		return bodypart
+	if(!getUniversityPolicy().isSlotOffered(slot)):
+		return null
+	var humanSpecies = GlobalRegistry.getSpecies(getUniversityPolicy().getPlayerSpecies()[0])
+	var defaultID = humanSpecies.getDefaultForSlot(slot, getGender()) if humanSpecies != null else null
+	if(!getUniversityPolicy().isBodypartAllowed(slot, defaultID)):
+		if(!BodypartSlot.isEssential(slot)):
+			return null
+		var allowedIDs:Array = getUniversityPolicy().getAllowedBodypartIDs(slot)
+		if(allowedIDs.empty()):
+			return null
+		defaultID = allowedIDs[0]
+	if(getBodypartID(slot) == defaultID):
+		return null # already correct, don't churn
+	return GlobalRegistry.createBodypart(defaultID)
+
+func giveBodypart(bodypart: Bodypart, emitSignal = true):
+	# While the policy itself is mutating us, apply exactly what it asked for.
+	if(!enforcingUniversityPolicy && isUniversityPlayerLocked()):
+		bodypart = universitySubstituteBodypart(bodypart)
+		if(bodypart == null):
+			return
+	.giveBodypart(bodypart, emitSignal)
+
+func removeBodypart(slot, emitSignal = true):
+	# No canonicalisation here: policy-driven removal must not call back into policy.
+	# Essential slots are refilled by the next canonicalisation/appearance update.
+	.removeBodypart(slot, emitSignal)
+
+func updateAppearance():
+	# Guarded backstop for direct-field writers and the atomic end of transformation
+	# write-back. Cheap no-op when the player is already compliant.
+	if(!enforcingUniversityPolicy && isUniversityPlayerLocked()):
+		var _corrections = canonicaliseForUniversity()
+	.updateAppearance()
+
+func applyBodypartsSkinData(theSkinData):
+	.applyBodypartsSkinData(theSkinData)
+	if(!enforcingUniversityPolicy && isUniversityPlayerLocked()):
+		var _corrections = canonicaliseForUniversity()
+
+func applyRandomSkin():
+	.applyRandomSkin()
+	if(!enforcingUniversityPolicy && isUniversityPlayerLocked()):
+		var _corrections = canonicaliseForUniversity()
+
+func applyRandomSkinAndColors():
+	.applyRandomSkinAndColors()
+	if(!enforcingUniversityPolicy && isUniversityPlayerLocked()):
+		var _corrections = canonicaliseForUniversity()
+
+func applyRandomSkinAndColorsAndParts():
+	.applyRandomSkinAndColorsAndParts()
+	if(!enforcingUniversityPolicy && isUniversityPlayerLocked()):
+		var _corrections = canonicaliseForUniversity()
+
+func checkSkins(applyRandomSkinOnFail = false):
+	.checkSkins(applyRandomSkinOnFail)
+	if(!enforcingUniversityPolicy && isUniversityPlayerLocked()):
+		var _corrections = canonicaliseForUniversity()
 	
 func resetBodypartsToDefaultFor(speciesIds):
 	if(speciesIds is String):
@@ -405,6 +540,10 @@ func resetBodypartsToDefaultFor(speciesIds):
 		giveBodypart(bestBodypart, false)
 		
 	emit_signal("bodypart_changed")
+
+	# University: defaults may differ per species; canonicalise afterwards.
+	if(!enforcingUniversityPolicy && isUniversityPlayerLocked()):
+		var _corrections = canonicaliseForUniversity()
 
 func saveData():
 	var data = {
@@ -462,6 +601,8 @@ func saveData():
 	return data
 
 func loadData(data):
+	# Set before any assignment or policy-intercepted call (giveBodypart, checkSkins, ...).
+	loadingPlayerData = true
 	gamename = SAVE.loadVar(data, "gamename", "Player")
 	credits = SAVE.loadVar(data, "credits", 0)
 	pain = SAVE.loadVar(data, "pain", 0)
@@ -529,6 +670,11 @@ func loadData(data):
 		if(allSkills[skillID].alwaysVisible()):
 			skillsHolder.ensureSkillExists(skillID)
 	getInventory().removeBrokenDuplicatedItems()
+
+	# University state (and the student_profile) is restored after the player, so policy can't
+	# be evaluated here. SaveManager runs applyUniversityPolicyAfterLoad() once it is available.
+	loadingPlayerData = false
+	needsUniversityPolicySweep = true
 
 func checkLocation():
 	var _roomInfo = GM.world.getRoomByID(getLocation())
@@ -974,6 +1120,7 @@ func saveOriginalTFData() -> Dictionary:
 	return result
 
 func applyTFData(_data):
+	# Transformation write-back sets these fields directly, so canonicalise at the end.
 	pickedSpecies = loadTFVar(_data, "species", pickedSpecies)
 	pickedFemininity = loadTFVar(_data, "femininity", pickedFemininity)
 	pickedThickness = loadTFVar(_data, "thickness", pickedThickness)
@@ -992,6 +1139,9 @@ func applyTFData(_data):
 		if(bodypart == null || !partSkinData.has(bodypartSlot)):
 			continue
 		bodypart.applySkinData(partSkinData[bodypartSlot] if partSkinData.has(bodypartSlot) else {})
+
+	if(!enforcingUniversityPolicy && isUniversityPlayerLocked()):
+		var _corrections = canonicaliseForUniversity()
 
 func onSexEvent(_event : SexEvent):
 	.onSexEvent(_event)
