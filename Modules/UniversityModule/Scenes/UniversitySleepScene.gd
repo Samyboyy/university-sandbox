@@ -4,6 +4,7 @@ extends "res://Scenes/SceneBase.gd"
 # and advances the day through the existing day/time system (MainScene.startNewDay()).
 
 const FirstDay = preload("res://Game/University/UniversityFirstDay.gd")
+const DailyLife = preload("res://Game/University/UniversityDailyLife.gd")
 
 var firstDay = FirstDay.new()
 
@@ -37,7 +38,13 @@ func _run():
 func _react(_action: String, _args):
 	if(_action == "sleep"):
 		var _advanced = firstDay.advanceFrom(getUniversityState(), FirstDay.STAGE_SLEEP)
-		GM.main.startNewDay()
+		# University games recover needs and close off missed classes through the daily-life
+		# service; legacy games just get the inherited day advance.
+		var dailyLife = DailyLife.new()
+		if(dailyLife.isActive()):
+			var _result = dailyLife.sleepUntilMorning()
+		else:
+			GM.main.startNewDay()
 		endScene()
 		return
 	if(_action == "leave"):

@@ -27,6 +27,8 @@ const CURRENT_SCHEMA_VERSION := 1
 const SYSTEM_VALIDATORS := {
 	"student_profile": preload("res://Game/University/UniversityStudentProfile.gd"),
 	"first_day": preload("res://Game/University/UniversityFirstDay.gd"),
+	"needs": preload("res://Game/University/UniversityNeeds.gd"),
+	"timetable": preload("res://Game/University/UniversityTimetable.gd"),
 }
 const MIN_SUPPORTED_SCHEMA_VERSION := 1
 

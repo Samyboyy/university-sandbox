@@ -21,6 +21,7 @@ func _init():
 
 	scenes = [
 		"res://Modules/UniversityModule/Scenes/UniversityNewGameScene.gd",
+		"res://Modules/UniversityModule/Scenes/UniversityHubScene.gd",
 		"res://Modules/UniversityModule/Scenes/UniversityCoordinatorScene.gd",
 		"res://Modules/UniversityModule/Scenes/UniversityOrientationScene.gd",
 		"res://Modules/UniversityModule/Scenes/UniversitySleepScene.gd",

@@ -13,6 +13,7 @@ extends "res://Scenes/SceneBase.gd"
 const Policy = preload("res://Game/University/UniversityPlayablePolicy.gd")
 const StudentProfile = preload("res://Game/University/UniversityStudentProfile.gd")
 const FirstDay = preload("res://Game/University/UniversityFirstDay.gd")
+const DailyLife = preload("res://Game/University/UniversityDailyLife.gd")
 
 const STARTER_OUTFIT_ID := "UniversityStarterClothes"
 const STARTER_UNDERWEAR_BOTTOM_ID := "plainBriefs"
@@ -92,7 +93,9 @@ func _react(_action: String, _args):
 	if(_action == "finish"):
 		studentProfile.completeOnboarding(GM.main.university)
 		firstDay.begin(GM.main.university)
-		runScene("WorldScene")
+		DailyLife.new().ensureState() # needs and timetable defaults
+		# University games use the University life interface; WorldScene stays for legacy games.
+		runScene("UniversityHubScene")
 		endScene()
 		return
 
