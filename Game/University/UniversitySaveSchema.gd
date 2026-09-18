@@ -26,6 +26,7 @@ const CURRENT_SCHEMA_VERSION := 1
 # Validators expose validate(data) -> String and must not touch live state.
 const SYSTEM_VALIDATORS := {
 	"student_profile": preload("res://Game/University/UniversityStudentProfile.gd"),
+	"first_day": preload("res://Game/University/UniversityFirstDay.gd"),
 }
 const MIN_SUPPORTED_SCHEMA_VERSION := 1
 

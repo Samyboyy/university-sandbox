@@ -192,6 +192,65 @@ restraints today (the dorm has no NPCs, pawns or prison events), so T4C adds no 
 campus NPCs and events arrive, add a University player equip guard for muzzles, collars, wrist and
 ankle restraints, cages and prison uniforms. Tests already assert none are equipped.
 
+## First campus day (T5)
+
+The first post-onboarding gameplay loop: leave the dorm, cross campus, check in, attend
+orientation, come home and sleep.
+
+**Campus topology** (one floor, `UniversityDormFloor`, all links bidirectional):
+
+```
+Private Dorm Room ─S─ Dorm Corridor ─S─ Dorm Lobby ─S─ Campus Quad ─E─ Student Services
+                                                              └────W─ Lecture Hall
+```
+
+| Room id | Name |
+|---|---|
+| `university_private_dorm` | Private Dorm Room |
+| `university_dorm_corridor` | Dorm Corridor |
+| `university_dorm_lobby` | Dorm Lobby |
+| `university_quad` | Campus Quad |
+| `university_student_services` | Student Services |
+| `university_lecture_hall` | Lecture Hall |
+
+Travel uses the inherited WorldScene `go` action and its standard 30-second cost; the dorm keeps
+no NPC population. Room buttons use the inherited `RoomAction` node: **Sleep** (dorm),
+**Talk to the coordinator** (Student Services) and **Attend orientation** (Lecture Hall).
+
+**NPC.** Priya Raman, the first-year orientation coordinator (`universityCoordinator`), is a
+persistent, serialized human `Character` at Student Services. Her dialogue branches on the current
+stage, and she only checks the player in once.
+
+**Objective state** lives in `university.systems["first_day"]`:
+
+```json
+{"stage": "leave_dorm", "completed_on_day": -1}
+```
+
+Stages run `leave_dorm → check_in → attend_orientation → return_dorm → sleep → complete`.
+`advanceFrom(state, fromStage)` only moves the sequence when the player is *at* that stage, so
+steps can't be skipped and repeating a finished interaction does nothing. `completed_on_day` records
+the day the sequence finished (written before the night passes) and is `-1` until then.
+Completion advances the day through `MainScene.startNewDay()`, which also triggers the game's
+normal autosave.
+
+The objective is shown through a real quest, `university_first_day` (Tasks screen), and repeated in
+scene text when the player arrives somewhere on campus. The quest and the progress event both
+require a **valid `student_profile`**, so a legacy/T3 game that happens to carry first-day data never
+runs or shows the sequence.
+
+**Validation and schema.** `UniversityFirstDay.validate()` is registered in
+`UniversitySaveSchema.SYSTEM_VALIDATORS`: the stage must be one of the known stages, and
+`completed_on_day` must be a whole number ≥ -1 that is set if and only if the stage is `complete`.
+**No schema bump:** like `student_profile`, the system is optional in version 1, so profile-free
+T3-era saves remain valid.
+
+**Equipment containment (T4D) stays deferred.** The slice adds no path to inherited restraint or
+equipment behaviour: the coordinator scene equips nothing, the campus rooms have no NPC population
+or pawns, no interaction system runs there, and no prison event is reachable. Tests assert the
+player still has no muzzle, collar, cuffs, cage or prison uniform after the whole day. Revisit when
+campus NPCs, pawns or events are introduced.
+
 ## Placeholders
 
 - The starter outfit reuses BDCC's shirt-and-shorts model.

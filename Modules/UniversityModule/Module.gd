@@ -21,11 +21,23 @@ func _init():
 
 	scenes = [
 		"res://Modules/UniversityModule/Scenes/UniversityNewGameScene.gd",
+		"res://Modules/UniversityModule/Scenes/UniversityCoordinatorScene.gd",
+		"res://Modules/UniversityModule/Scenes/UniversityOrientationScene.gd",
+		"res://Modules/UniversityModule/Scenes/UniversitySleepScene.gd",
 		"res://Modules/UniversityModule/Scenes/UniversityCharacterCreatorScene.gd",
 		"res://Modules/UniversityModule/Scenes/UniversityChangeSkinScene.gd",
 	]
 	items = [
 		"res://Modules/UniversityModule/Items/UniversityStarterClothes.gd",
+	]
+	characters = [
+		"res://Modules/UniversityModule/Characters/UniversityCoordinator.gd",
+	]
+	events = [
+		"res://Modules/UniversityModule/Events/UniversityFirstDayEvent.gd",
+	]
+	quests = [
+		"res://Modules/UniversityModule/Quests/UniversityFirstDayQuest.gd",
 	]
 
 func preInit():

@@ -40,6 +40,7 @@ const DORM_FLOOR_ID := "UniversityDormFloor"
 const LEGACY_PRISON_CELL := "cellblock_orange_playercell"
 const LEGACY_PRISON_SCENES := ["IntroScene", "IntroIntake", "IntroMedical", "IntroWakeup", "PickStartingPerksScene"]
 const PROFILE_SYSTEM_ID := "student_profile"
+const FIRST_DAY_SYSTEM_ID := "first_day"
 const PROFILE_ROUTE := "university"
 const T3_ERA_FIXTURE_PATH := "user://t3_era_no_student_profile.save" # outside saves/ so the save list ignores it
 const ROUTE_PLAYER_NAME := "Harness Student"
@@ -315,7 +316,8 @@ func phaseRegistry():
 	check(registry.getModules().size() > 0, "module registry is populated", "> 0", registry.getModules().size())
 	check(registry.getAllSpecies().has("human"), "species registry contains 'human'", "has 'human'", registry.getAllSpecies().keys())
 	recorded["registryCounts"] = [registry.scenes.size(), registry.items.size(), registry.bodyparts.size(),
-		registry.getAllSpecies().size(), registry.getSkinsAllKeys().size(), registry.transformations.size()]
+		registry.getAllSpecies().size(), registry.getSkinsAllKeys().size(), registry.transformations.size(),
+		registry.quests.size()]
 	info("counts: scenes=" + str(registry.scenes.size()) + " items=" + str(registry.items.size())
 		+ " bodyparts=" + str(registry.bodyparts.size()) + " modules=" + str(registry.getModules().size())
 		+ " species=" + str(registry.getAllSpecies().size()))
@@ -661,9 +663,12 @@ func phaseUniversityRoute():
 			if(roomText.find(word) >= 0):
 				prisonWords.append(word)
 		check(prisonWords.empty(), "dorm name and description use no prison terms", [], prisonWords)
-		check(room.population == 0 && !room.canNorth && !room.canSouth && !room.canEast && !room.canWest, "dorm is private: no NPC population, no exits yet", "isolated", room.population)
+		# T5: the dorm is still private (no NPC population) but now opens onto the corridor.
+		check(room.population == 0 && !room.canNorth && !room.canEast && !room.canWest && room.canSouth, "dorm is private (no NPC population) and opens south to the corridor", "private, south exit", room.population)
 	check(save.canSave(), "saving is allowed in the dorm", true, save.canSave())
-	check(!gm.QS.isActive("EscapeQuest") && !gm.QS.isActive("WorkInMinesQuest") && gm.QS.getAllQuests().empty(), "no quests are active or listed after onboarding", {}, gm.QS.getAllQuests().keys())
+	# T5: the University first-day quest is listed; legacy BDCC quests stay hidden.
+	check(!gm.QS.isActive("EscapeQuest") && !gm.QS.isActive("WorkInMinesQuest") && gm.QS.getAllQuests().keys() == ["university_first_day"],
+		"only the University first-day quest is listed after onboarding", ["university_first_day"], gm.QS.getAllQuests().keys())
 	phaseDurableHumanPolicy()
 
 
@@ -836,7 +841,206 @@ func phaseDurableHumanPolicy():
 	checkMaleStudent("after the durable-policy tests")
 	check(!gm.pc.getInventory().hasRemovableRestraints(), "no restraints after the mutation tests", false, gm.pc.getInventory().hasRemovableRestraints())
 	check(save.canSave(), "saving still allowed after the mutation tests", true, save.canSave())
+	phaseFirstCampusDay()
+
+
+# ---------------------------------------------------------------- T5: first campus day
+
+const CAMPUS_ROOMS := ["university_private_dorm", "university_dorm_corridor", "university_dorm_lobby",
+	"university_quad", "university_student_services", "university_lecture_hall"]
+const COORDINATOR_ID := "universityCoordinator"
+const FIRST_DAY_QUEST_ID := "university_first_day"
+const STAGE_LEAVE := "leave_dorm"
+const STAGE_CHECK_IN := "check_in"
+const STAGE_ORIENTATION := "attend_orientation"
+const STAGE_RETURN := "return_dorm"
+const STAGE_SLEEP := "sleep"
+const STAGE_COMPLETE := "complete"
+
+
+func firstDayStage() -> String:
+	var gm = getNode("GM")
+	if(!gm.main.university.hasSystemData(FIRST_DAY_SYSTEM_ID)):
+		return ""
+	return str(gm.main.university.getSystemData(FIRST_DAY_SYSTEM_ID).get("stage", ""))
+
+
+func roomActionMethods() -> Array:
+	var result:Array = []
+	for button in currentButtons():
+		if(button[1] == "actionCallback" && button[2].size() > 0):
+			result.append(str(button[2][0]))
+	return result
+
+
+# Walks one room in a direction using the real WorldScene "go" action.
+func walk(direction:int, expectedRoom:String) -> bool:
+	var gm = getNode("GM")
+	pick("go", [direction, direction])
+	return gm.pc.getLocation() == expectedRoom
+
+
+func phaseFirstCampusDay():
+	var gm = getNode("GM")
+	var save = getNode("SAVE")
+	var world = gm.world
+	# GameWorld.Direction values inlined: the global class can't be resolved at harness compile time.
+	var dirWest = 0
+	var dirNorth = 1
+	var dirEast = 2
+	var dirSouth = 3
+
+	beginPhase("Phase 5a: campus rooms and topology")
+	var missingRooms:Array = []
+	for roomID in CAMPUS_ROOMS:
+		if(world.getRoomByID(roomID) == null):
+			missingRooms.append(roomID)
+	check(missingRooms.empty(), "every campus room is registered", [], missingRooms)
+	if(!missingRooms.empty()):
+		abortRun("campus rooms missing")
+		return
+	var prisonWordsFound:Array = []
+	for roomID in CAMPUS_ROOMS:
+		var room = world.getRoomByID(roomID)
+		var roomText:String = (room.getName() + " " + room.getDescription()).to_lower()
+		for word in PRISON_WORDS:
+			if(roomText.find(word) >= 0):
+				prisonWordsFound.append(roomID + ":" + word)
+	check(prisonWordsFound.empty(), "no campus room uses prison terminology", [], prisonWordsFound)
+
+	var topology := [
+		["university_private_dorm", dirSouth, "university_dorm_corridor"],
+		["university_dorm_corridor", dirSouth, "university_dorm_lobby"],
+		["university_dorm_lobby", dirSouth, "university_quad"],
+		["university_quad", dirEast, "university_student_services"],
+		["university_quad", dirWest, "university_lecture_hall"],
+		["university_dorm_corridor", dirNorth, "university_private_dorm"],
+		["university_dorm_lobby", dirNorth, "university_dorm_corridor"],
+		["university_quad", dirNorth, "university_dorm_lobby"],
+		["university_student_services", dirWest, "university_quad"],
+		["university_lecture_hall", dirEast, "university_quad"],
+	]
+	var badLinks:Array = []
+	for link in topology:
+		if(!world.canGoID(link[0], link[1]) || world.applyDirectionID(link[0], link[1]) != link[2]):
+			badLinks.append(str(link[0]) + "->" + str(link[2]))
+	check(badLinks.empty(), "all campus connections and return routes work in both directions", [], badLinks)
+
+	beginPhase("Phase 5b: the first-day objective starts in the dorm")
+	check(firstDayStage() == STAGE_LEAVE, "the first day starts at 'leave the dorm'", STAGE_LEAVE, firstDayStage())
+	check(gm.QS.getAllQuests().has(FIRST_DAY_QUEST_ID) && gm.QS.isActive(FIRST_DAY_QUEST_ID), "the first-day task is listed and active", true, gm.QS.getAllQuests().keys())
+	var questProgress:Array = gm.QS.getAllQuests()[FIRST_DAY_QUEST_ID].getProgress()
+	check(questProgress.size() > 0, "the current objective is shown to the player", "objective text", questProgress)
+	info("objective: " + str(questProgress))
+	check("UniversitySleepScene" in roomActionMethods(), "the dorm offers a sleep action", "UniversitySleepScene", roomActionMethods())
+
+	# Sleeping too early must not skip the day.
+	pick("actionCallback", ["UniversitySleepScene"])
+	check(currentSceneID() == "UniversitySleepScene", "the sleep scene opens", "UniversitySleepScene", currentSceneID())
+	check(!("sleep" in buttonMethods()), "sleeping is refused before the day's objectives are done", "no sleep button", buttonMethods())
+	pick("leave")
+	check(firstDayStage() == STAGE_LEAVE, "an early sleep attempt doesn't advance the objective", STAGE_LEAVE, firstDayStage())
+
+	beginPhase("Phase 5c: leaving the dorm and crossing campus")
+	var timeBefore:int = gm.main.getTime()
+	check(walk(dirSouth, "university_dorm_corridor"), "the player can walk out into the corridor", "university_dorm_corridor", gm.pc.getLocation())
+	check(gm.main.getTime() > timeBefore, "travel advances the clock", "> " + str(timeBefore), gm.main.getTime())
+	check(firstDayStage() == STAGE_CHECK_IN, "leaving the dorm advances the objective to checking in", STAGE_CHECK_IN, firstDayStage())
+	check(walk(dirSouth, "university_dorm_lobby"), "the player reaches the lobby", "university_dorm_lobby", gm.pc.getLocation())
+	check(walk(dirSouth, "university_quad"), "the player reaches the quad", "university_quad", gm.pc.getLocation())
+
+	beginPhase("Phase 5d: orientation can't be attended before checking in")
+	check(walk(dirWest, "university_lecture_hall"), "the player reaches the lecture hall", "university_lecture_hall", gm.pc.getLocation())
+	check("UniversityOrientationScene" in roomActionMethods(), "the lecture hall offers the orientation action", "UniversityOrientationScene", roomActionMethods())
+	pick("actionCallback", ["UniversityOrientationScene"])
+	check(!("attend" in buttonMethods()), "orientation can't be attended before check-in", "no attend button", buttonMethods())
+	pick("leave")
+	check(firstDayStage() == STAGE_CHECK_IN, "the skipped orientation left the objective unchanged", STAGE_CHECK_IN, firstDayStage())
+
+	beginPhase("Phase 5e: checking in with the coordinator")
+	check(walk(dirEast, "university_quad"), "the player returns to the quad", "university_quad", gm.pc.getLocation())
+	check(walk(dirEast, "university_student_services"), "the player reaches Student Services", "university_student_services", gm.pc.getLocation())
+	var coordinator = gm.main.getCharacter(COORDINATOR_ID)
+	check(coordinator != null && coordinator.getLocation() == "university_student_services", "the orientation coordinator is at Student Services", "university_student_services", coordinator.getLocation() if coordinator != null else "missing")
+	check(coordinator != null && coordinator.getSpecies() == ["human"], "the coordinator is human", ["human"], coordinator.getSpecies() if coordinator != null else null)
+	info("coordinator: " + (coordinator.getName() if coordinator != null else "missing"))
+	pick("actionCallback", ["UniversityCoordinatorScene"])
+	check(currentSceneID() == "UniversityCoordinatorScene", "talking opens the coordinator scene", "UniversityCoordinatorScene", currentSceneID())
+	check("checkin" in buttonMethods(), "the coordinator offers to check the player in", "checkin", buttonMethods())
+	var checkInTime:int = gm.main.getTime()
+	pick("checkin")
+	check(firstDayStage() == STAGE_ORIENTATION, "checking in advances the objective to orientation", STAGE_ORIENTATION, firstDayStage())
+	check(gm.main.getTime() > checkInTime, "checking in takes time", "> " + str(checkInTime), gm.main.getTime())
+
+	# Idempotency: talking again must not rewind or repeat anything.
+	pick("actionCallback", ["UniversityCoordinatorScene"])
+	check(!("checkin" in buttonMethods()), "checking in twice isn't offered", "no checkin button", buttonMethods())
+	pick("leave")
+	check(firstDayStage() == STAGE_ORIENTATION, "talking again leaves the objective at orientation", STAGE_ORIENTATION, firstDayStage())
+
+	beginPhase("Phase 5f: save and reload mid-sequence")
+	var midSavePath:String = "user://saves/us_harness_first_day_mid.save"
+	save.saveGame(midSavePath)
+	pick("actionCallback", ["UniversityCoordinatorScene"])
+	pick("leave")
+	var midLoaded:bool = save.tryLoadGame(midSavePath)
+	check(midLoaded && firstDayStage() == STAGE_ORIENTATION, "a mid-sequence save reloads at the same stage", STAGE_ORIENTATION, firstDayStage())
+	check(gm.pc.getLocation() == "university_student_services", "the reloaded player is where they saved", "university_student_services", gm.pc.getLocation())
+	check(gm.main.getCharacter(COORDINATOR_ID) != null && gm.main.getCharacter(COORDINATOR_ID).getName() == "Priya Raman", "the coordinator survives save/load", "Priya Raman", gm.main.getCharacter(COORDINATOR_ID).getName() if gm.main.getCharacter(COORDINATOR_ID) != null else "missing")
+	checkHumanDormPlayerBasics("after the mid-sequence reload")
+
+	beginPhase("Phase 5g: attending orientation")
+	check(walk(dirWest, "university_quad"), "back to the quad", "university_quad", gm.pc.getLocation())
+	check(walk(dirWest, "university_lecture_hall"), "into the lecture hall", "university_lecture_hall", gm.pc.getLocation())
+	var orientationTime:int = gm.main.getTime()
+	pick("actionCallback", ["UniversityOrientationScene"])
+	check("attend" in buttonMethods(), "orientation can now be attended", "attend", buttonMethods())
+	pick("attend")
+	check(firstDayStage() == STAGE_RETURN, "attending orientation advances the objective to going home", STAGE_RETURN, firstDayStage())
+	check(gm.main.getTime() != orientationTime, "orientation takes time", "changed", gm.main.getTime())
+	pick("actionCallback", ["UniversityOrientationScene"])
+	check(!("attend" in buttonMethods()), "orientation can't be attended twice", "no attend button", buttonMethods())
+	pick("leave")
+	check(firstDayStage() == STAGE_RETURN, "re-entering the hall is safe", STAGE_RETURN, firstDayStage())
+
+	beginPhase("Phase 5h: home, sleep and the next day")
+	check(walk(dirEast, "university_quad"), "back to the quad", "university_quad", gm.pc.getLocation())
+	check(walk(dirNorth, "university_dorm_lobby"), "into the lobby", "university_dorm_lobby", gm.pc.getLocation())
+	check(walk(dirNorth, "university_dorm_corridor"), "up the corridor", "university_dorm_corridor", gm.pc.getLocation())
+	check(walk(dirNorth, "university_private_dorm"), "home to the dorm room", "university_private_dorm", gm.pc.getLocation())
+	check(firstDayStage() == STAGE_SLEEP, "returning home advances the objective to sleeping", STAGE_SLEEP, firstDayStage())
+	var dayBefore:int = gm.main.getDays()
+	pick("actionCallback", ["UniversitySleepScene"])
+	check("sleep" in buttonMethods(), "sleeping is now offered", "sleep", buttonMethods())
+	pick("sleep")
+	check(firstDayStage() == STAGE_COMPLETE, "sleeping completes the first day", STAGE_COMPLETE, firstDayStage())
+	check(gm.main.getDays() == dayBefore + 1, "the day advances through the existing day system", dayBefore + 1, gm.main.getDays())
+	# Recorded before the night passes: the day the sequence was finished, not the new one.
+	check(gm.main.university.getSystemData(FIRST_DAY_SYSTEM_ID).get("completed_on_day") == dayBefore, "the completion day is recorded", dayBefore, gm.main.university.getSystemData(FIRST_DAY_SYSTEM_ID).get("completed_on_day"))
+	check(gm.QS.getAllQuests()[FIRST_DAY_QUEST_ID].isCompleted(), "the first-day task reads as completed", true, gm.QS.getAllQuests()[FIRST_DAY_QUEST_ID].isCompleted())
+
+	beginPhase("Phase 5i: completion survives save/load")
+	var doneSavePath:String = "user://saves/us_harness_first_day_done.save"
+	save.saveGame(doneSavePath)
+	var doneLoaded:bool = save.tryLoadGame(doneSavePath)
+	check(doneLoaded && firstDayStage() == STAGE_COMPLETE, "a completed first day stays completed after reload", STAGE_COMPLETE, firstDayStage())
+	check(gm.main.getDays() == dayBefore + 1, "the next-day state survives the reload", dayBefore + 1, gm.main.getDays())
+	check(gm.QS.getAllQuests().keys() == [FIRST_DAY_QUEST_ID] && !gm.QS.isActive("EscapeQuest"), "still no legacy prison quests", [FIRST_DAY_QUEST_ID], gm.QS.getAllQuests().keys())
+	checkHumanDormPlayerBasics("after completing the first day")
+	check(!gm.pc.getInventory().hasRemovableRestraints() && equippedItemIDs() == sortedArray(STARTER_ITEMS_MALE), "no restraints or prison clothing after the slice", sortedArray(STARTER_ITEMS_MALE), equippedItemIDs())
+
+	# Put the player back in the dorm for the existing save/load phases.
+	gm.pc.setLocation("university_private_dorm")
+	pick("actionCallback", ["UniversitySleepScene"])
+	pick("leave")
 	nextStep(5)
+
+
+# Human/policy checks that don't assume the player is standing in the dorm.
+func checkHumanDormPlayerBasics(context:String):
+	var gm = getNode("GM")
+	var policy = load(POLICY_PATH).new()
+	check(gm.pc.getSpecies() == ["human"] && policy.getViolations(gm.pc).empty(), "player is still human and compliant " + context, [], policy.getViolations(gm.pc))
 
 
 func phaseNewGameAndSave():
@@ -865,8 +1069,11 @@ func phaseNewGameAndSave():
 	check(gm.main.get("university") != null, "live University Sandbox data exists for the new game", "GM.main.university", gm.main.get("university"))
 	# T4: a new game now starts with exactly one University system, the student profile
 	# (replaces T3's "empty systems" baseline assertion).
-	check(gm.main.university.saveData()["systems"].keys() == [PROFILE_SYSTEM_ID], "new game's University systems contain only the student profile", [PROFILE_SYSTEM_ID], gm.main.university.saveData()["systems"].keys())
+	# T5: onboarding also starts the first-day objective.
+	check(sortedArray(gm.main.university.saveData()["systems"].keys()) == sortedArray([PROFILE_SYSTEM_ID, FIRST_DAY_SYSTEM_ID]),
+		"new game's University systems are the student profile and the first day", [PROFILE_SYSTEM_ID, FIRST_DAY_SYSTEM_ID], gm.main.university.saveData()["systems"].keys())
 	recorded["equipped"] = equippedItemIDs()
+	recorded["characterCount"] = gm.main.getCharacters().size()
 	gm.main.university.setSystemData(PROBE_SYSTEM_ID, PROBE_DATA)
 	recorded["university"] = sortedJSON(gm.main.university.saveData())
 	recorded["name"] = gm.pc.getName()
@@ -1072,7 +1279,9 @@ func phaseRejections():
 				"null or {error: ...}", summary)
 
 	var latest:String = save.getLatestLoadableSavePath()
-	check(latest == TEST_SAVE_PATH, "resume picks the valid save and skips invalid ones", TEST_SAVE_PATH, latest)
+	# T5: sleeping produces a real autosave, so resume may pick that; what matters is that it
+	# never picks one of the invalid fixtures.
+	check(latest != "" && !latest.begins_with(REJECT_SAVE_PREFIX), "resume picks a valid save and skips invalid ones", "a valid save", latest)
 	check(save.canResumeGame(), "resume is still offered while a valid save exists", true, save.canResumeGame())
 
 	beginPhase("Phase 6b: T3-era save without a student profile stays valid")
@@ -1087,6 +1296,11 @@ func phaseRejections():
 		"it loads with its other University data and no profile", "probe only", gm.main.university.saveData()["systems"].keys())
 	check(gm.QS.getAllQuests().has("EscapeQuest"), "without a profile the game isn't treated as University-route (legacy quests listed)", true, gm.QS.getAllQuests().has("EscapeQuest"))
 	check(!gm.pc.isUniversityPlayerLocked(), "a profile-free player is not policy-locked", false, gm.pc.isUniversityPlayerLocked())
+	# T5: the first-day objective belongs to University games only.
+	# Legacy games list every BDCC quest (no containment); what matters is that the University
+	# objective is neither active nor visible without a valid student profile.
+	check(!gm.QS.isActive(FIRST_DAY_QUEST_ID) && !gm.QS.getAllQuests()[FIRST_DAY_QUEST_ID].isVisible(),
+		"the first-day objective is not active or visible in a profile-free legacy game", false, gm.QS.isActive(FIRST_DAY_QUEST_ID))
 	check(!gm.pc.needsUniversityPolicySweep, "the deferred sweep flag is cleared after loading", false, gm.pc.needsUniversityPolicySweep)
 	# Legacy freedom is proven by mutation, not by TF weights: this fixture inherits the
 	# University save's suppressed weights, which say nothing about legacy behaviour.
@@ -1126,6 +1340,54 @@ func phaseRejections():
 	check(gm.pc.pickedSkin == FUR_SKIN_ID, "serialized fur skin survived the load", FUR_SKIN_ID, gm.pc.pickedSkin)
 	check(!gm.pc.loadingPlayerData, "the player load guard is cleared", false, gm.pc.loadingPlayerData)
 	check(!gm.pc.needsUniversityPolicySweep, "no deferred sweep remains pending after the post-load hook", false, gm.pc.needsUniversityPolicySweep)
+
+	beginPhase("Phase 6b3: profile-free first-day data is inert in the campus scenes")
+	# A legacy/T3 save can still carry copied first_day data. It must stay stored but unusable:
+	# no stage-specific buttons, no advancement, no mutation - checked through the real room actions.
+	var inertSave:Dictionary = validSave.duplicate(true)
+	var _droppedProfile2 = inertSave["university"]["systems"].erase(PROFILE_SYSTEM_ID)
+	inertSave["university"]["systems"][FIRST_DAY_SYSTEM_ID] = {"stage": STAGE_CHECK_IN, "completed_on_day": -1}
+	inertSave["player"]["location"] = "university_student_services"
+	var inertPath:String = REJECT_SAVE_PREFIX + "legacy_first_day_no_profile.save"
+	check(isInsideTestRoot(ProjectSettings.globalize_path(inertPath)) && writeTextFile(inertPath, JSON.print(inertSave, "\t")),
+		"inert first-day fixture is written inside the test root", testRoot + "/...", ProjectSettings.globalize_path(inertPath))
+	var inertLoaded:bool = save.tryLoadGame(inertPath)
+	check(inertLoaded && save.getLastLoadError() == "", "the profile-free first-day save loads", true, save.getLastLoadError())
+	var storedBefore:String = sortedJSON(gm.main.university.getSystemData(FIRST_DAY_SYSTEM_ID))
+	check(storedBefore == sortedJSON({"stage": STAGE_CHECK_IN, "completed_on_day": -1}), "the stored first-day data survives the load unchanged", {"stage": STAGE_CHECK_IN, "completed_on_day": -1}, storedBefore)
+	check(!gm.QS.isActive(FIRST_DAY_QUEST_ID) && !gm.QS.getAllQuests()[FIRST_DAY_QUEST_ID].isVisible(), "the first-day task is inactive and invisible", false, gm.QS.isActive(FIRST_DAY_QUEST_ID))
+	check(gm.pc.getLocation() == "university_student_services", "the legacy player is at Student Services", "university_student_services", gm.pc.getLocation())
+
+	pick("actionCallback", ["UniversityCoordinatorScene"])
+	check(currentSceneID() == "UniversityCoordinatorScene", "the coordinator room action still opens", "UniversityCoordinatorScene", currentSceneID())
+	check(!("checkin" in buttonMethods()), "no check-in is offered without a valid student profile", "no checkin button", buttonMethods())
+	pick("leave")
+	check(sortedJSON(gm.main.university.getSystemData(FIRST_DAY_SYSTEM_ID)) == storedBefore, "talking to the coordinator did not mutate the inert data", storedBefore, sortedJSON(gm.main.university.getSystemData(FIRST_DAY_SYSTEM_ID)))
+
+	var dirWest2 = 0
+	var dirNorth2 = 1
+	var dirEast2 = 2
+	pick("go", [dirWest2, dirWest2])
+	pick("go", [dirWest2, dirWest2])
+	check(gm.pc.getLocation() == "university_lecture_hall", "the legacy player can still walk to the lecture hall", "university_lecture_hall", gm.pc.getLocation())
+	check(sortedJSON(gm.main.university.getSystemData(FIRST_DAY_SYSTEM_ID)) == storedBefore, "entering campus rooms did not advance the objective", storedBefore, sortedJSON(gm.main.university.getSystemData(FIRST_DAY_SYSTEM_ID)))
+	pick("actionCallback", ["UniversityOrientationScene"])
+	check(!("attend" in buttonMethods()), "orientation can't be attended without a valid student profile", "no attend button", buttonMethods())
+	pick("leave")
+	check(sortedJSON(gm.main.university.getSystemData(FIRST_DAY_SYSTEM_ID)) == storedBefore, "the lecture hall did not mutate the inert data", storedBefore, sortedJSON(gm.main.university.getSystemData(FIRST_DAY_SYSTEM_ID)))
+
+	pick("go", [dirEast2, dirEast2])
+	pick("go", [dirNorth2, dirNorth2])
+	pick("go", [dirNorth2, dirNorth2])
+	pick("go", [dirNorth2, dirNorth2])
+	check(gm.pc.getLocation() == "university_private_dorm", "the legacy player can walk home", "university_private_dorm", gm.pc.getLocation())
+	var legacyDay:int = gm.main.getDays()
+	pick("actionCallback", ["UniversitySleepScene"])
+	check("sleep" in buttonMethods(), "ordinary sleeping is still available in a legacy game", "sleep", buttonMethods())
+	pick("sleep")
+	check(gm.main.getDays() == legacyDay + 1, "legacy sleeping still advances the day normally", legacyDay + 1, gm.main.getDays())
+	check(sortedJSON(gm.main.university.getSystemData(FIRST_DAY_SYSTEM_ID)) == storedBefore, "legacy sleeping did not mutate the inert first-day data", storedBefore, sortedJSON(gm.main.university.getSystemData(FIRST_DAY_SYSTEM_ID)))
+	check(!gm.pc.isUniversityPlayerLocked(), "the profile-free player is still unrestricted", false, gm.pc.isUniversityPlayerLocked())
 
 	beginPhase("Phase 6c: a University save with a non-human player payload is repaired on load")
 	var brokenSave:Dictionary = validSave.duplicate(true)
@@ -1183,6 +1445,8 @@ func phaseVerifyFinalLoad():
 	checkMaleStudent("after the final load")
 	var registry = getNode("GlobalRegistry")
 	var finalCounts:Array = [registry.scenes.size(), registry.items.size(), registry.bodyparts.size(),
-		registry.getAllSpecies().size(), registry.getSkinsAllKeys().size(), registry.transformations.size()]
-	check(finalCounts == recorded["registryCounts"], "registry species, bodypart, skin and transformation counts are unchanged", recorded["registryCounts"], finalCounts)
+		registry.getAllSpecies().size(), registry.getSkinsAllKeys().size(), registry.transformations.size(),
+		registry.quests.size()]
+	check(gm.main.getCharacters().size() == recorded["characterCount"], "static character count is unchanged after gameplay and reloads", recorded["characterCount"], gm.main.getCharacters().size())
+	check(finalCounts == recorded["registryCounts"], "registry species, bodypart, skin, transformation and quest counts are unchanged", recorded["registryCounts"], finalCounts)
 	finishRun()

@@ -12,6 +12,7 @@ extends "res://Scenes/SceneBase.gd"
 
 const Policy = preload("res://Game/University/UniversityPlayablePolicy.gd")
 const StudentProfile = preload("res://Game/University/UniversityStudentProfile.gd")
+const FirstDay = preload("res://Game/University/UniversityFirstDay.gd")
 
 const STARTER_OUTFIT_ID := "UniversityStarterClothes"
 const STARTER_UNDERWEAR_BOTTOM_ID := "plainBriefs"
@@ -20,6 +21,7 @@ const STARTER_UNDERWEAR_TOP_ID := "plainBra"
 
 var policy = Policy.new()
 var studentProfile = StudentProfile.new()
+var firstDay = FirstDay.new()
 
 func _init():
 	sceneID = "UniversityNewGameScene"
@@ -89,6 +91,7 @@ func _react(_action: String, _args):
 
 	if(_action == "finish"):
 		studentProfile.completeOnboarding(GM.main.university)
+		firstDay.begin(GM.main.university)
 		runScene("WorldScene")
 		endScene()
 		return

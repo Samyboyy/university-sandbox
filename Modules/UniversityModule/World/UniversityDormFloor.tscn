@@ -1,7 +1,8 @@
-[gd_scene load_steps=3 format=2]
+[gd_scene load_steps=4 format=2]
 
 [ext_resource path="res://Game/World/GameRoom.tscn" type="PackedScene" id=1]
 [ext_resource path="res://Game/World/SubWorld.tscn" type="PackedScene" id=2]
+[ext_resource path="res://Game/World/RoomAction.tscn" type="PackedScene" id=3]
 
 [node name="UniversityDormFloor" instance=ExtResource( 2 )]
 
@@ -9,10 +10,85 @@
 position = Vector2( -6400, -6400 )
 roomName = "Private Dorm Room"
 roomID = "university_private_dorm"
-roomDescription = "Your own room in the first-year residence hall. It's small and still mostly bare: a single bed with fresh sheets, a desk and chair under the window, a wardrobe and a few moving boxes you haven't unpacked yet. Nobody else lives here. The bathrooms, kitchen and laundry are shared facilities down the hall."
+roomDescription = "Your own room in the first-year residence hall. It's small and still mostly bare: a single bed with fresh sheets, a desk and chair under the window, a wardrobe and a few moving boxes you haven't unpacked yet. Nobody else lives here. The corridor outside leads down to the lobby."
 canWest = false
 canNorth = false
 canEast = false
-canSouth = false
+canSouth = true
 roomSprite = 10
 roomColor = 3
+
+[node name="Sleep" parent="PrivateDormRoom" index="0" instance=ExtResource( 3 )]
+ActionName = "Sleep"
+ActionTooltip = "Turn in for the night"
+ActionScene = "UniversitySleepScene"
+
+[node name="DormCorridor" parent="." index="1" instance=ExtResource( 1 )]
+position = Vector2( -6400, -6336 )
+roomName = "Dorm Corridor"
+roomID = "university_dorm_corridor"
+roomDescription = "A long corridor of identical doors, each with a name card slotted beside it. Somebody's music leaks through the wall, a printed floor plan hangs by the stairwell, and a handwritten sign points new arrivals downstairs to the lobby."
+canWest = false
+canNorth = true
+canEast = false
+canSouth = true
+roomSprite = 3
+roomColor = 8
+
+[node name="DormLobby" parent="." index="2" instance=ExtResource( 1 )]
+position = Vector2( -6400, -6272 )
+roomName = "Dorm Lobby"
+roomID = "university_dorm_lobby"
+roomDescription = "The common room at the foot of the stairs: mismatched sofas, a noticeboard layered with club flyers and lost keys, a vending machine humming in the corner, and a propped-open door onto the quad."
+canWest = false
+canNorth = true
+canEast = false
+canSouth = true
+roomSprite = 0
+roomColor = 8
+
+[node name="CampusQuad" parent="." index="3" instance=ExtResource( 1 )]
+position = Vector2( -6400, -6208 )
+roomName = "Campus Quad"
+roomID = "university_quad"
+roomDescription = "A wide lawn criss-crossed by paths, ringed with benches and bike racks. Students drag suitcases in every direction. Signposts point east to Student Services and west to the lecture hall; the paths further out are roped off for the move-in weekend."
+canWest = true
+canNorth = true
+canEast = true
+canSouth = false
+roomSprite = 0
+roomColor = 1
+
+[node name="StudentServices" parent="." index="4" instance=ExtResource( 1 )]
+position = Vector2( -6336, -6208 )
+roomName = "Student Services"
+roomID = "university_student_services"
+roomDescription = "A bright reception office with a queue rope nobody is using, a rack of course leaflets and a long desk. A laminated sign reads: FIRST YEARS - CHECK IN FOR ORIENTATION HERE."
+canWest = true
+canNorth = false
+canEast = false
+canSouth = false
+roomSprite = 1
+roomColor = 3
+
+[node name="TalkToCoordinator" parent="StudentServices" index="0" instance=ExtResource( 3 )]
+ActionName = "Talk to the coordinator"
+ActionTooltip = "Speak to the orientation coordinator at the desk"
+ActionScene = "UniversityCoordinatorScene"
+
+[node name="LectureHall" parent="." index="5" instance=ExtResource( 1 )]
+position = Vector2( -6464, -6208 )
+roomName = "Lecture Hall"
+roomID = "university_lecture_hall"
+roomDescription = "A raked hall of folding seats facing a projector screen and a scuffed lectern. It smells of dust and floor polish. A handwritten board by the door reads: FIRST-YEAR ORIENTATION - ALL WELCOME."
+canWest = false
+canNorth = false
+canEast = true
+canSouth = false
+roomSprite = 4
+roomColor = 3
+
+[node name="AttendOrientation" parent="LectureHall" index="0" instance=ExtResource( 3 )]
+ActionName = "Attend orientation"
+ActionTooltip = "Take a seat for the first-year orientation talk"
+ActionScene = "UniversityOrientationScene"
