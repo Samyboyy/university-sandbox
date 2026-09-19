@@ -72,23 +72,28 @@ really supports: `Sleeping` (`sleep`, `rub`), `Showering` (`body`, `head`, `crot
 `GlobalRegistry.getStageScenesCachedStates()`. Toilet uses `Solo`/`kneel` as the closest safe
 state because the inherited renderer has no toilet stage — a deliberate, documented limitation.
 
-## Interface structure
+## Interface structure (T7)
 
-The status region is built from real Godot controls added through `GM.ui.addCustomControl`, so it
-is inspectable in tests rather than BBCode pretending to be panels:
+Valid University games opt into a dedicated three-column shell; profile-free legacy saves retain
+the inherited interface. The palette is near-black/charcoal with off-white copy, blue choices,
+green money, green/amber/red need states and restrained rose/purple accents.
 
-```
-PanelContainer "UniversityStatusPanel"
-  VBoxContainer "StatusRows"
-    Label        "StatusHeadline"    location, time, day, credits
-    Label        "StatusObligation"  next class and current objective
-    GridContainer "NeedsGrid"        8 x (Label + ProgressBar, min width 120px)
-    GridContainer "ContextualGrid"   only while arousal/humiliation are above zero
-```
+- **Left rail:** `$` money, time/date, next class/objective, all eight compact `ProgressBar` needs,
+  contextual pressures only while relevant, then Save/Load/Skills/Menu controls. The old room
+  map and scene/character list are hidden. Its 286-pixel width is fixed so wide windows give their
+  spare space to the centre rather than stretching the compact controls.
+- **Centre:** a scrollable dark location card with description, last result, and real inline
+  `Button` controls for actions and direct destinations. Action names stay compact while time,
+  effects and disabled reasons wrap onto a secondary line. Scene-backed interactions such as
+  check-in, orientation and first-day sleep use the same shell through a generic inline presenter.
+  The inherited 15-cell keyboard grid is hidden, while its option registry remains active for
+  keyboard compatibility and automation.
+- **Right:** the existing authoritative layered `Stage3D` player renderer, enlarged by removing the
+  name/species, Level, Pain, Lust, Stamina and Work Credits header. Status Effects stays below it.
+  Its 330-pixel width is likewise fixed.
 
-It sits inside the inherited GameUI text container (already within a `ScrollContainer`), so
-scrolling, keyboard use and the existing button flow are unchanged, and the layered character
-renderer stays permanently visible. The proven GameUI itself is not rewritten.
+The status rail remains registered as `university_status_panel` and the centre card as
+`university_main_panel`, making the visible controls directly inspectable by the harness.
 
 ## Daily loop
 
@@ -119,8 +124,7 @@ profile or first-day state. Profile-free saves never gain them.
 
 ## Interface
 
-Status block (location, time, day, credits, next class, current objective, needs bars, contextual
-meters), location description, numbered actions with previews, then destinations with travel times.
-The layered BDCC doll stays visible in the inherited stage panel during ordinary play — it is not
-replaced by a portrait. Palette: charcoal surfaces, muted purple, restrained rose accents
-(`#e8a0bf` rose, `#9db8e8` information, `#7ad4a0` wellbeing, `#ffc46b` warning). All original.
+The T7 shell deliberately borrows the information hierarchy of a compact browser life sim without
+copying its assets: persistent information at left, readable choices in the centre, and this
+project's layered character animation at right. Layout and palette resources are original and live
+in `UniversityUIStyle.gd`.

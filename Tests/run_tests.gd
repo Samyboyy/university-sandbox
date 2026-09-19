@@ -1222,8 +1222,33 @@ func phaseTruthfulInterface():
 		check(firstBar != null && firstBar.rect_min_size.x >= 100, "need bars declare a readable minimum width", ">= 100 px", firstBar.rect_min_size.x if firstBar != null else 0)
 		check(rows.get_node_or_null("StatusObligation") != null, "the obligation line is its own control", "StatusObligation", rows.get_node_or_null("StatusObligation"))
 		var ui = getNode("GM").ui
-		var scrollParent = ui.textcontainer.get_parent() if ui.get("textcontainer") != null else null
-		check(scrollParent == null || scrollParent is ScrollContainer, "the shell sits inside the inherited scrolling area", "ScrollContainer", scrollParent)
+		check(panel.get_parent() == ui.get_node("MainLayout/LeftPanel/Margin/VBox"), "the needs panel lives in the compact left rail", "left rail", panel.get_parent())
+		check(rows.get_node("StatusHeadline").text.begins_with("$"), "money uses the compact dollar display", "$…", rows.get_node("StatusHeadline").text)
+	var mainPanel = gm.ui.getCustomControl("university_main_panel")
+	check(mainPanel != null && mainPanel is PanelContainer, "the central location card is a real Godot control", "PanelContainer", mainPanel)
+	var mainContent = mainPanel.get_node_or_null("UniversityMainContent") if mainPanel != null else null
+	var inlineChoices:int = 0
+	if(mainContent != null):
+		for child in mainContent.get_children():
+			if(child.name == "UniversityChoice" && child is Button):
+				inlineChoices += 1
+	check(inlineChoices > 0, "actions and destinations are clickable inline controls", "> 0", inlineChoices)
+	var wrappedDetails:int = 0
+	if(mainContent != null):
+		for child in mainContent.get_children():
+			if(child.name == "UniversityChoiceDetail" && child is Label && child.autowrap):
+				wrappedDetails += 1
+	check(wrappedDetails > 0, "action previews use wrapped detail labels instead of overflowing buttons", "> 0", wrappedDetails)
+	var ui = getNode("GM").ui
+	check(ui.universityMode, "the valid University route enables the dedicated shell", true, ui.universityMode)
+	check(ui.get_node("MainLayout/LeftPanel").size_flags_horizontal == Control.SIZE_FILL && ui.get_node("MainLayout/RightPanel").size_flags_horizontal == Control.SIZE_FILL && ui.mainGameScreen.size_flags_horizontal == Control.SIZE_EXPAND_FILL, "side rails stay compact while the centre receives spare width", "fixed rails and expanding centre", [ui.get_node("MainLayout/LeftPanel").size_flags_horizontal, ui.get_node("MainLayout/RightPanel").size_flags_horizontal, ui.mainGameScreen.size_flags_horizontal])
+	check(ui.skillsButton.text == "Skills", "the Skills utility keeps an honest label", "Skills", ui.skillsButton.text)
+	check(!ui.mapAndTimePanel.visible && !ui.smartCharacterPanel.visible, "the old map and character list panels are removed", "both hidden", [ui.mapAndTimePanel.visible, ui.smartCharacterPanel.visible])
+	check(!ui.get_node("MainLayout/MainScreenBoxContainer/HBoxContainer").visible, "the inherited keyboard grid is removed from view", false, ui.get_node("MainLayout/MainScreenBoxContainer/HBoxContainer").visible)
+	var playerPanel = ui.playerPanel
+	check(!playerPanel.get_node("NameLabel").visible && !playerPanel.get_node("LevelBar").visible && !playerPanel.get_node("PainBar").visible && !playerPanel.get_node("StaminaBar").visible && !playerPanel.get_node("CreditsLabel").visible, "legacy name, combat stats and Work Credits are hidden", "all hidden", [playerPanel.get_node("NameLabel").visible, playerPanel.get_node("LevelBar").visible, playerPanel.get_node("PainBar").visible, playerPanel.get_node("StaminaBar").visible, playerPanel.get_node("CreditsLabel").visible])
+	check(playerPanel.get_node("ViewportWrapper").visible && gm.ui.getStage3d() != null, "the layered player showcase remains visible", "visible Stage3D", playerPanel.get_node("ViewportWrapper").visible)
+	check(playerPanel.get_node("StatusEffectsLabel").visible && playerPanel.get_node("FlexGridContainer").visible, "Status Effects remains beneath the showcase", "visible", [playerPanel.get_node("StatusEffectsLabel").visible, playerPanel.get_node("FlexGridContainer").visible])
 	setNeed("arousal", 30)
 	pick("travel", ["dorm_room"])
 	check(statusPanel() != null && statusPanel().get_node("StatusRows").get_node_or_null("ContextualGrid") != null, "contextual meters get their own controls when active", "ContextualGrid", "missing")
@@ -1329,6 +1354,9 @@ func phaseFirstCampusDay():
 	check("check_in" in hubActionIDs(), "the check-in action is offered", "check_in", hubActionIDs())
 	pick("doaction", ["check_in"])
 	check(currentSceneID() == "UniversityCoordinatorScene", "the coordinator scene opens from the interface", "UniversityCoordinatorScene", currentSceneID())
+	check(gm.ui.universityMode && !gm.ui.mapAndTimePanel.visible && !gm.ui.get_node("MainLayout/MainScreenBoxContainer/HBoxContainer").visible, "scene-backed interactions keep the clean University shell", "University shell", [gm.ui.universityMode, gm.ui.mapAndTimePanel.visible, gm.ui.get_node("MainLayout/MainScreenBoxContainer/HBoxContainer").visible])
+	var genericOptions = gm.ui.getCustomControl("university_generic_options")
+	check(genericOptions != null && genericOptions.get_node_or_null("UniversityGenericOptions") != null && genericOptions.get_node("UniversityGenericOptions").get_child_count() > 0, "scene-backed choices are presented as inline controls", "inline choices", genericOptions)
 	pick("checkin")
 	check(firstDayStage() == STAGE_ORIENTATION, "checking in advances the objective", STAGE_ORIENTATION, firstDayStage())
 

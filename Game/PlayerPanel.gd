@@ -22,6 +22,7 @@ var draggingCamera: bool = false
 var mouseInsideViewport = false
 var savedTooltipDoll = null
 var savedTooltipBodypartSlot = null
+var universityMode:bool = false
 
 # Called when the node enters the scene tree for the first time.
 func _ready():
@@ -37,6 +38,8 @@ func on_player_statchange():
 	updateUI()
 
 func updateUI():
+	if(universityMode):
+		return
 	nameLabel.text = GM.pc.getName() + ", " + GM.pc.getSpeciesFullName()
 	creditsLabel.text = "Work Credits: " + str(GM.pc.getCredits())
 
@@ -167,3 +170,23 @@ func _handle_drag(event: InputEventScreenDrag):
 func setPCViewportVis(_v:bool):
 	$ViewportWrapper.visible = _v
 	$ViewportWrapper/CustomViewportControl.ignoreEvents = !_v
+
+# T7 keeps the authoritative layered character renderer and status effects, but removes the
+# inherited prison-RPG identity and combat-stat header from valid University games.
+func setUniversityMode(enabled:bool):
+	universityMode = enabled
+	$NameLabel.visible = !enabled
+	$LevelBar.visible = !enabled
+	$PainBar.visible = !enabled
+	$ConsciousnessBar.visible = false if enabled else $ConsciousnessBar.visible
+	$HBoxContainer.visible = !enabled
+	$StaminaBar.visible = !enabled
+	$CreditsLabel.visible = !enabled
+	$StatusEffectsLabel.text = "Status Effects"
+	if(enabled):
+		$StatusEffectsLabel.add_color_override("font_color", Color("aaa3aa"))
+	else:
+		$StatusEffectsLabel.remove_color_override("font_color")
+	$ViewportWrapper.rect_min_size = Vector2(0, 360 if enabled else 0)
+	if(!enabled):
+		updateUI()

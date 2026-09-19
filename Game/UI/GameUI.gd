@@ -43,6 +43,16 @@ var textboxes: Dictionary = {}
 var gameParser: GameParser
 var sayParser: SayParser
 var isInBigAnswersMode:bool = false
+const UniversityUIStyle = preload("res://Game/University/UniversityUIStyle.gd")
+const UniversityBaseFont = preload("res://UI/FontResources/Normal/NormalFont.tres")
+var universityMode:bool = false
+var universityBackground:ColorRect = null
+var universityInfoControl:Control = null
+var savedLeftStyle = null
+var savedRightStyle = null
+var universityCompactFont = null
+var universityCustomOptions:bool = false
+var universityGenericOptions:VBoxContainer = null
 
 onready var translate_box = $"%TranslateBox"
 
@@ -102,6 +112,8 @@ func _ready():
 	if(OS.has_touchscreen_ui_hint()):
 		textOutput.selection_enabled = false
 	setIsRightHandedLayout(OPTIONS.isUILayoutRightHanded())
+	savedLeftStyle = $MainLayout/LeftPanel.get_stylebox("panel")
+	savedRightStyle = $MainLayout/RightPanel.get_stylebox("panel")
 	
 	connect("visibility_changed", self, "onVisChanged")
 	
@@ -123,6 +135,7 @@ func clearText():
 	#textOutput.scroll_to_line(1)
 	scrollPanel.set_v_scroll(0)
 	textOutput.bbcode_text = ""
+	textOutput.visible = true
 		
 		
 func clearButtons():
@@ -132,6 +145,8 @@ func clearButtons():
 	options = {}
 	optionsCurrentID = 0
 	currentPage = 0
+	universityCustomOptions = false
+	universityGenericOptions = null
 	updateButtons()
 	clearExtraButtons()
 	#_on_option_button_tooltip_end()
@@ -139,22 +154,26 @@ func clearButtons():
 		
 func addButtonAt(place, text: String, tooltip: String = "", method: String = "", args = []):
 	options[place] = [true, text, tooltip, method, args]
+	addUniversityGenericOption(place)
 	queueUpdate()
 	
 func addDisabledButtonAt(place, text: String, tooltip: String = ""):
 	options[place] = [false, text, tooltip]
+	addUniversityGenericOption(place)
 	queueUpdate()
 		
 func addButton(text: String, tooltip: String = "", method: String = "", args = []):
 	while(options.has(optionsCurrentID)):
 		optionsCurrentID += 1
 	options[optionsCurrentID] = [true, text, tooltip, method, args]
+	addUniversityGenericOption(optionsCurrentID)
 	queueUpdate()
 	
 func addDisabledButton(text: String, tooltip: String = ""):
 	while(options.has(optionsCurrentID)):
 		optionsCurrentID += 1
 	options[optionsCurrentID] = [false, text, tooltip]
+	addUniversityGenericOption(optionsCurrentID)
 	queueUpdate()
 
 
@@ -426,8 +445,133 @@ func clearUItextboxes():
 		#textcontainer.remove_child(textbox)
 		textbox.queue_free()
 	textboxes = {}
+	universityInfoControl = null
 	scrollPanel.visible = true
 	uniquePanelSpot.visible = false
+	textOutput.visible = true
+
+# Presentation mode is deliberately opt-in. Profile-free/legacy games never call it and retain
+# the inherited interface byte-for-byte. The University hub calls it each time it renders.
+func setUniversityMode(enabled:bool):
+	if(universityMode == enabled):
+		return
+	universityMode = enabled
+	if(enabled):
+		if(universityCompactFont == null):
+			universityCompactFont = UniversityBaseFont.duplicate()
+			universityCompactFont.size = 18
+		if(universityBackground == null):
+			universityBackground = ColorRect.new()
+			universityBackground.name = "UniversityBackground"
+			universityBackground.anchor_right = 1.0
+			universityBackground.anchor_bottom = 1.0
+			universityBackground.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			add_child(universityBackground)
+			move_child(universityBackground, 0)
+		universityBackground.color = UniversityUIStyle.BACKGROUND
+		universityBackground.visible = true
+		$MainLayout/LeftPanel.add_stylebox_override("panel", UniversityUIStyle.panel(UniversityUIStyle.RAIL, 0, UniversityUIStyle.RAIL))
+		$MainLayout/RightPanel.add_stylebox_override("panel", UniversityUIStyle.panel(UniversityUIStyle.RAIL, 0, UniversityUIStyle.RAIL))
+		$MainLayout/LeftPanel.rect_min_size.x = 286
+		$MainLayout/RightPanel.rect_min_size.x = 330
+		$MainLayout/LeftPanel.size_flags_horizontal = Control.SIZE_FILL
+		$MainLayout/RightPanel.size_flags_horizontal = Control.SIZE_FILL
+		mainGameScreen.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		$MainLayout/HSplitContainer.visible = false
+		$MainLayout/HSplitContainer2.visible = false
+		smartCharacterPanel.visible = false
+		mapAndTimePanel.visible = false
+		$MainLayout/LeftPanel/Margin/VBox/VBoxContainer3.visible = false
+		$MainLayout/MainScreenBoxContainer/Panel.visible = false
+		$MainLayout/MainScreenBoxContainer/HBoxContainer.visible = false
+		extra_buttons_grid.visible = false
+		playerPanel.setUniversityMode(true)
+		save_button.text = "Save"
+		load_button.text = "Load"
+		skillsButton.text = "Skills"
+		for utilityButton in [save_button, load_button, skillsButton, $MainLayout/LeftPanel/Margin/VBox/HBoxContainer3/MenuButton, debugPanelButton, rollbackButton]:
+			utilityButton.add_font_override("font", universityCompactFont)
+	else:
+		if(universityBackground != null):
+			universityBackground.visible = false
+		$MainLayout/LeftPanel.add_stylebox_override("panel", savedLeftStyle)
+		$MainLayout/RightPanel.add_stylebox_override("panel", savedRightStyle)
+		$MainLayout/LeftPanel.rect_min_size.x = 260
+		$MainLayout/RightPanel.rect_min_size.x = 240
+		$MainLayout/LeftPanel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		$MainLayout/RightPanel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		$MainLayout/HSplitContainer.visible = true
+		$MainLayout/HSplitContainer2.visible = true
+		smartCharacterPanel.visible = true
+		mapAndTimePanel.visible = true
+		$MainLayout/LeftPanel/Margin/VBox/VBoxContainer3.visible = true
+		$MainLayout/MainScreenBoxContainer/Panel.visible = true
+		$MainLayout/MainScreenBoxContainer/HBoxContainer.visible = true
+		extra_buttons_grid.visible = true
+		playerPanel.setUniversityMode(false)
+		save_button.text = "Q.save"
+		load_button.text = "Q.load"
+		skillsButton.text = "Skills"
+		for utilityButton in [save_button, load_button, skillsButton, $MainLayout/LeftPanel/Margin/VBox/HBoxContainer3/MenuButton, debugPanelButton, rollbackButton]:
+			utilityButton.remove_font_override("font")
+
+# Register a custom control with the usual lifecycle/test API, but mount it in the compact left
+# rail rather than inside the central story scroll.
+func setUniversityInfoControl(id:String, control:Control):
+	assert(universityMode)
+	assert(!textboxes.has(id), "Trying to add a control with the same id. Id is "+id)
+	var leftVBox = $MainLayout/LeftPanel/Margin/VBox
+	leftVBox.add_child(control)
+	leftVBox.move_child(control, 0)
+	textboxes[id] = control
+	universityInfoControl = control
+
+func addUniversityMainControl(id:String, control:Control):
+	assert(universityMode)
+	textOutput.visible = false
+	addCustomControl(id, control)
+
+func setUniversityCustomOptions(enabled:bool):
+	universityCustomOptions = enabled
+
+# Scene-backed University interactions use the inherited option registry, but their visible
+# controls are mounted inline here so check-in, orientation and sleep never fall back to the old
+# bottom grid. UniversityHubScene supplies its richer action cards and opts out of this adapter.
+func addUniversityGenericOption(index:int):
+	if(!universityMode || universityCustomOptions || !options.has(index)):
+		return
+	if(universityGenericOptions == null):
+		var panel := PanelContainer.new()
+		panel.name = "UniversityGenericOptionsPanel"
+		panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		panel.add_stylebox_override("panel", UniversityUIStyle.panel(UniversityUIStyle.CARD, 10, UniversityUIStyle.BORDER))
+		universityGenericOptions = VBoxContainer.new()
+		universityGenericOptions.name = "UniversityGenericOptions"
+		universityGenericOptions.add_constant_override("separation", 6)
+		panel.add_child(universityGenericOptions)
+		textcontainer.add_child(panel)
+		textboxes["university_generic_options"] = panel
+	var option:Array = options[index]
+	var button := Button.new()
+	button.name = "UniversityGenericChoice"
+	button.text = str(option[1]) if option[0] else str(option[1]) + "  —  " + str(option[2])
+	button.hint_tooltip = str(option[2])
+	button.disabled = !option[0]
+	button.align = Button.ALIGN_LEFT
+	button.rect_min_size.y = 38
+	button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	button.add_color_override("font_color", UniversityUIStyle.LINK)
+	button.add_color_override("font_color_hover", UniversityUIStyle.LINK_HOVER)
+	button.add_color_override("font_color_disabled", UniversityUIStyle.MUTED)
+	button.add_font_override("font", universityCompactFont)
+	var styles:Dictionary = UniversityUIStyle.choice()
+	button.add_stylebox_override("normal", styles["normal"])
+	button.add_stylebox_override("hover", styles["hover"])
+	button.add_stylebox_override("pressed", styles["pressed"])
+	button.add_stylebox_override("disabled", UniversityUIStyle.panel(UniversityUIStyle.CARD, 5, UniversityUIStyle.BORDER))
+	if(option[0]):
+		button.connect("pressed", self, "_on_option_button", [index])
+	universityGenericOptions.add_child(button)
 
 func loadingSavefileFinished():
 	playerPanel.loadingSavefileFinished()

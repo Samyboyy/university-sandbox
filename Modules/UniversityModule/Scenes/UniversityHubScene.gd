@@ -1,38 +1,35 @@
 extends "res://Scenes/SceneBase.gd"
 
-# The University life interface: the normal-play screen for a valid University game.
-#
-# Layout, using the inherited scene/GameUI frame so the layered character doll stays visible
-# in the stage panel throughout ordinary play:
-#   - status block: location, time, day, money, next obligation, needs bars, contextual meters
-#   - location block: title and description
-#   - numbered action buttons with their time cost and previewed need effects
-#   - destination buttons with travel time, disabled with a reason when closed
-# All gameplay resolution happens in UniversityDailyLife; this scene only presents it.
-# See Docs/UNIVERSITY_LIFE.md.
-
+# T7 University normal-play shell. Gameplay remains in UniversityDailyLife; this scene only
+# presents the same actions, destinations, previews and disabled reasons as clickable controls.
 const DailyLife = preload("res://Game/University/UniversityDailyLife.gd")
 const Needs = preload("res://Game/University/UniversityNeeds.gd")
 const FirstDay = preload("res://Game/University/UniversityFirstDay.gd")
-
-# Original University Sandbox palette: charcoal surfaces, muted purple, restrained rose accents.
-const COLOUR_ACCENT := "#e8a0bf"   # rose: headings and the player's own state
-const COLOUR_INFO := "#9db8e8"     # muted blue: navigation and information
-const COLOUR_GOOD := "#7ad4a0"     # green: wellbeing
-const COLOUR_WARN := "#ffc46b"     # amber: warnings
-const COLOUR_MUTED := "#b9a8c4"    # muted purple: secondary text
+const UIStyle = preload("res://Game/University/UniversityUIStyle.gd")
+const NormalFont = preload("res://UI/FontResources/Normal/NormalFont.tres")
+const BoldFont = preload("res://UI/FontResources/Normal/BoldFont.tres")
 
 const STATUS_PANEL_ID := "university_status_panel"
-const NEEDS_BAR_MIN_WIDTH := 120.0 # keeps two bar columns readable at 1280x720
+const MAIN_PANEL_ID := "university_main_panel"
+const NEEDS_BAR_MIN_WIDTH := 104.0
 
 var dailyLife = DailyLife.new()
 var needs = Needs.new()
 var firstDay = FirstDay.new()
 var lastResult:String = ""
-var currentPose:Array = ["Solo", "stand"] # activity shown by the persistent character showcase
+var currentPose:Array = ["Solo", "stand"]
+var compactFont = null
+var bodyFont = null
+var headingFont = null
 
 func _init():
 	sceneID = "UniversityHubScene"
+	compactFont = NormalFont.duplicate()
+	compactFont.size = 15
+	bodyFont = NormalFont.duplicate()
+	bodyFont.size = 18
+	headingFont = BoldFont.duplicate()
+	headingFont.size = 24
 
 func _initScene(_args = []):
 	dailyLife.ensureState()
@@ -41,157 +38,252 @@ func getUniversityState():
 	return dailyLife.getUniversityState()
 
 func _run():
-	# University-only interface: a legacy/profile-free game falls back to the inherited world.
+	# This is the sole presentation switch: invalid/profile-free games retain the original UI.
 	if(!dailyLife.isActive()):
+		GM.ui.setUniversityMode(false)
 		runScene("WorldScene")
 		endScene()
 		return
 	dailyLife.ensureState()
+	GM.ui.setUniversityMode(true)
+	GM.ui.setUniversityCustomOptions(true)
 	var locationID:String = dailyLife.getCurrentLocationID()
-	aimCamera(dailyLife.locations.getRoomID(locationID))
 	setLocationName(dailyLife.locations.getName(locationID))
-	# The showcase reflects what the player just did, not a permanent standing pose.
 	playAnimation(currentPose[0], currentPose[1])
-
 	addStatusPanel(locationID)
-	sayStatusBlock(locationID)
-	sayLocationBlock(locationID)
-	addActionButtons(locationID)
-	addDestinationButtons()
+	addAccessibilityMirror(locationID)
+	addMainPanel(locationID)
 
-# --- persistent information region -------------------------------------------------
+# --- left information rail --------------------------------------------------------
 
-# An additive University shell built from real Godot controls, added into the inherited
-# GameUI text container (which is already inside a scroll container, so it scrolls and keeps
-# keyboard/button behaviour). The proven GameUI itself is untouched.
-func addStatusPanel(locationID:String):
+func addStatusPanel(_locationID:String):
 	var universityState = getUniversityState()
 	var panel := PanelContainer.new()
 	panel.name = "UniversityStatusPanel"
 	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	panel.add_stylebox_override("panel", UIStyle.panel(UIStyle.RAIL, 0, UIStyle.RAIL))
 
 	var rows := VBoxContainer.new()
 	rows.name = "StatusRows"
-	rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	rows.add_constant_override("separation", 10)
 	panel.add_child(rows)
 
 	var headline := Label.new()
 	headline.name = "StatusHeadline"
-	headline.autowrap = true
-	headline.text = dailyLife.locations.getName(locationID) + "   " + dailyLife.getTimeString() \
-		+ "   " + dailyLife.getDayString() + "   " + str(GM.pc.getCredits()) + " credits"
+	headline.text = "$" + str(GM.pc.getCredits())
+	headline.add_color_override("font_color", UIStyle.MONEY)
+	headline.add_font_override("font", headingFont)
 	rows.add_child(headline)
+
+	var clock := Label.new()
+	clock.name = "StatusClock"
+	clock.text = "◷  " + dailyLife.getTimeString() + "\n▣  " + dailyLife.getDayString()
+	clock.add_color_override("font_color", UIStyle.TEXT)
+	clock.add_font_override("font", bodyFont)
+	rows.add_child(clock)
+
+	rows.add_child(HSeparator.new())
 
 	var obligation := Label.new()
 	obligation.name = "StatusObligation"
 	obligation.autowrap = true
 	obligation.text = getObligationText()
+	obligation.add_color_override("font_color", UIStyle.MUTED)
+	obligation.add_font_override("font", compactFont)
 	rows.add_child(obligation)
 
 	var needsGrid := GridContainer.new()
 	needsGrid.name = "NeedsGrid"
-	needsGrid.columns = 4
+	needsGrid.columns = 2
+	needsGrid.add_constant_override("hseparation", 10)
+	needsGrid.add_constant_override("vseparation", 7)
 	needsGrid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	rows.add_child(needsGrid)
 	for needID in Needs.NEEDS:
-		needsGrid.add_child(makeNeedBar(needID, universityState))
+		needsGrid.add_child(makeNeedBar(needID, universityState, false))
 
 	var contextual:Array = needs.getVisibleContextual(universityState)
 	if(!contextual.empty()):
+		var contextualTitle := Label.new()
+		contextualTitle.text = "Current pressures"
+		contextualTitle.add_color_override("font_color", UIStyle.ACCENT)
+		contextualTitle.add_font_override("font", compactFont)
+		rows.add_child(contextualTitle)
 		var contextualGrid := GridContainer.new()
 		contextualGrid.name = "ContextualGrid"
-		contextualGrid.columns = 4
+		contextualGrid.columns = 2
+		contextualGrid.add_constant_override("hseparation", 10)
 		rows.add_child(contextualGrid)
 		for meterID in contextual:
-			contextualGrid.add_child(makeNeedBar(meterID, universityState))
+			contextualGrid.add_child(makeNeedBar(meterID, universityState, true))
 
-	GM.ui.addCustomControl(STATUS_PANEL_ID, panel)
+	GM.ui.setUniversityInfoControl(STATUS_PANEL_ID, panel)
 
-func makeNeedBar(needID:String, universityState) -> Control:
+func makeNeedBar(needID:String, universityState, contextual:bool) -> Control:
+	var value:float = needs.getValue(universityState, needID)
 	var box := VBoxContainer.new()
 	box.name = "Need_" + needID
 	box.rect_min_size = Vector2(NEEDS_BAR_MIN_WIDTH, 0)
 	box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	box.add_constant_override("separation", 2)
 	var label := Label.new()
 	label.name = "Label"
-	label.text = needs.getName(needID) + " " + str(int(round(needs.getValue(universityState, needID))))
+	label.text = needs.getName(needID) + "  " + str(int(round(value)))
+	label.add_color_override("font_color", UIStyle.TEXT)
+	label.add_font_override("font", compactFont)
 	box.add_child(label)
 	var bar := ProgressBar.new()
 	bar.name = "Bar"
 	bar.min_value = Needs.MIN_VALUE
 	bar.max_value = Needs.MAX_VALUE
-	bar.value = needs.getValue(universityState, needID)
+	bar.value = value
 	bar.percent_visible = false
-	bar.rect_min_size = Vector2(NEEDS_BAR_MIN_WIDTH, 14)
+	bar.rect_min_size = Vector2(NEEDS_BAR_MIN_WIDTH, 9)
+	bar.add_stylebox_override("bg", UIStyle.bar_background())
+	bar.add_stylebox_override("fg", UIStyle.bar_fill(UIStyle.need_colour(value, needID in Needs.PRESSURES, contextual)))
 	box.add_child(bar)
 	return box
 
 func getObligationText() -> String:
 	var universityState = getUniversityState()
-	var parts:Array = []
+	var lines:Array = []
 	var nextClass:Dictionary = dailyLife.timetable.getNextClass(universityState, GM.main.getDays(), dailyLife.getHourOfDay())
 	if(!nextClass.empty()):
-		parts.append("Next: " + str(nextClass["name"]) + ", " + dailyLife.timetable.describeWhen(nextClass)
-			+ ", " + dailyLife.locations.getName(nextClass["location"]))
+		lines.append("Next class\n" + str(nextClass["name"]) + "\n" + dailyLife.timetable.describeWhen(nextClass)
+			+ " · " + dailyLife.locations.getName(nextClass["location"]))
 	if(!firstDay.isCompleted(universityState) && firstDay.isActive(universityState)):
-		parts.append("Objective: " + firstDay.getObjectiveText(universityState))
-	if(parts.empty()):
+		lines.append("Objective\n" + firstDay.getObjectiveText(universityState))
+	if(lines.empty()):
 		return "No scheduled obligations."
-	return PoolStringArray(parts).join("    ")
+	return PoolStringArray(lines).join("\n\n")
 
-func sayStatusBlock(locationID:String):
+# TextOutput is hidden in this shell, but retaining a plain status mirror keeps translation,
+# accessibility extraction and older automation consumers useful without duplicating the UI.
+func addAccessibilityMirror(locationID:String):
 	var universityState = getUniversityState()
-	say("[color=" + COLOUR_ACCENT + "][b]" + dailyLife.locations.getName(locationID) + "[/b][/color]   "
-		+ "[color=" + COLOUR_INFO + "]" + dailyLife.getTimeString() + "  " + dailyLife.getDayString() + "[/color]   "
-		+ "[color=" + COLOUR_GOOD + "]" + str(GM.pc.getCredits()) + " credits[/color]\n")
-
-	say("[color=" + COLOUR_WARN + "]" + getObligationText() + "[/color]\n")
-	# Text mirror of the bars: keeps the needs searchable/readable for screen text and tests.
-	var barLine:String = ""
-	var column:int = 0
+	say(dailyLife.locations.getName(locationID) + "  " + dailyLife.getTimeString() + "  " + dailyLife.getDayString() + "  $" + str(GM.pc.getCredits()) + "\n")
+	say("Next: " + getObligationText() + "\n")
 	for needID in Needs.NEEDS:
-		barLine += needs.getBarText(universityState, needID) + "    "
-		column += 1
-		if(column % 4 == 0):
-			barLine += "\n"
-	say(barLine + "\n")
+		say(needs.getName(needID) + " " + str(int(round(needs.getValue(universityState, needID)))) + " ")
+	say("\n")
 
-# --- main location region ----------------------------------------------------------
+# --- central location card --------------------------------------------------------
 
-func sayLocationBlock(locationID:String):
-	saynn("[color=" + COLOUR_MUTED + "]" + dailyLife.locations.getDescription(locationID) + "[/color]")
+func addMainPanel(locationID:String):
+	var card := PanelContainer.new()
+	card.name = "UniversityMainPanel"
+	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	card.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	card.add_stylebox_override("panel", UIStyle.panel(UIStyle.CARD, 12, UIStyle.BORDER))
+
+	var content := VBoxContainer.new()
+	content.name = "UniversityMainContent"
+	content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	content.add_constant_override("separation", 10)
+	card.add_child(content)
+
+	var title := Label.new()
+	title.name = "LocationTitle"
+	title.text = dailyLife.locations.getName(locationID)
+	title.add_color_override("font_color", UIStyle.TEXT)
+	title.add_font_override("font", headingFont)
+	content.add_child(title)
+
+	var description := Label.new()
+	description.name = "LocationDescription"
+	description.autowrap = true
+	description.text = dailyLife.locations.getDescription(locationID)
+	description.add_color_override("font_color", UIStyle.MUTED)
+	description.add_font_override("font", bodyFont)
+	content.add_child(description)
+
 	if(lastResult != ""):
-		saynn("[color=" + COLOUR_ACCENT + "]" + lastResult + "[/color]")
+		var resultPanel := PanelContainer.new()
+		resultPanel.name = "LastResult"
+		resultPanel.add_stylebox_override("panel", UIStyle.panel(UIStyle.CARD_RAISED, 6, UIStyle.ACCENT))
+		var resultLabel := Label.new()
+		resultLabel.autowrap = true
+		resultLabel.text = lastResult
+		resultLabel.add_color_override("font_color", UIStyle.TEXT)
+		resultLabel.add_font_override("font", bodyFont)
+		resultPanel.add_child(resultLabel)
+		content.add_child(resultPanel)
 		lastResult = ""
 
-func addActionButtons(_locationID:String):
-	saynn("[color=" + COLOUR_INFO + "][b]What you can do here[/b][/color]")
+	addSectionHeading(content, "What you can do here")
 	var shortcut:int = 1
 	for actionID in dailyLife.getActionsHere():
 		var action:Dictionary = dailyLife.getAction(actionID)
 		var preview:String = dailyLife.getActionPreview(actionID)
-		var label:String = str(shortcut) + ". " + str(action["name"])
-		if(preview != ""):
-			label += "  (" + preview + ")"
+		var label:String = "[" + str(shortcut) + "]  " + str(action["name"])
 		var blockReason:String = dailyLife.getActionBlockReason(actionID)
-		if(blockReason == ""):
-			addButton(label, str(action.get("desc", "")), "doaction", [actionID])
-		else:
-			addDisabledButton(label, blockReason)
+		addInlineChoice(content, label, preview, str(action.get("desc", "")), "doaction", [actionID], blockReason)
 		shortcut += 1
 
-func addDestinationButtons():
-	saynn("[color=" + COLOUR_INFO + "][b]Where you can go[/b][/color]")
+	addSectionHeading(content, "Where you can go")
 	for destinationID in dailyLife.getDestinations():
 		var minutes:int = dailyLife.locations.getTravelMinutes(destinationID)
 		var label:String = "Go: " + dailyLife.locations.getName(destinationID) + "  (" + str(minutes) + " min)"
 		var closedReason:String = dailyLife.getClosedReason(destinationID)
-		if(closedReason == ""):
-			addButton(label, "Travel there, taking " + str(minutes) + " minutes", "travel", [destinationID])
-		else:
-			addDisabledButton(label, closedReason)
+		addInlineChoice(content, label, "", "Travel there", "travel", [destinationID], closedReason)
+		shortcut += 1
 
-# --- reactions ---------------------------------------------------------------------
+	GM.ui.addUniversityMainControl(MAIN_PANEL_ID, card)
+
+func addSectionHeading(parent:Control, text:String):
+	var spacer := Control.new()
+	spacer.rect_min_size.y = 8
+	parent.add_child(spacer)
+	var heading := Label.new()
+	heading.text = text
+	heading.add_color_override("font_color", UIStyle.ACCENT)
+	heading.add_font_override("font", bodyFont)
+	parent.add_child(heading)
+
+func addInlineChoice(parent:Control, text:String, preview:String, tooltip:String, method:String, args:Array, disabledReason:String):
+	var enabled:bool = disabledReason == ""
+	var registryText:String = text + ("  (" + preview + ")" if preview != "" else "")
+	# Preserve the engine's option registry and keyboard/test semantics while hiding its old grid.
+	if(enabled):
+		addButton(registryText, tooltip, method, args)
+	else:
+		addDisabledButton(registryText, disabledReason)
+
+	var button := Button.new()
+	button.name = "UniversityChoice"
+	button.text = text
+	button.hint_tooltip = tooltip if enabled else disabledReason
+	button.disabled = !enabled
+	button.align = Button.ALIGN_LEFT
+	button.rect_min_size.y = 36
+	button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	button.add_color_override("font_color", UIStyle.LINK)
+	button.add_color_override("font_color_hover", UIStyle.LINK_HOVER)
+	button.add_color_override("font_color_disabled", UIStyle.MUTED)
+	button.add_font_override("font", bodyFont)
+	var styles:Dictionary = UIStyle.choice()
+	button.add_stylebox_override("normal", styles["normal"])
+	button.add_stylebox_override("hover", styles["hover"])
+	button.add_stylebox_override("pressed", styles["pressed"])
+	button.add_stylebox_override("disabled", UIStyle.panel(UIStyle.CARD, 5, UIStyle.BORDER))
+	if(enabled):
+		button.connect("pressed", self, "_onInlineChoice", [method, args])
+	parent.add_child(button)
+	if(preview != "" || disabledReason != ""):
+		var detail := Label.new()
+		detail.name = "UniversityChoiceDetail"
+		detail.autowrap = true
+		detail.text = disabledReason if disabledReason != "" else preview
+		detail.add_color_override("font_color", UIStyle.BAD if disabledReason != "" else UIStyle.MUTED)
+		detail.add_font_override("font", compactFont)
+		detail.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		parent.add_child(detail)
+
+func _onInlineChoice(method:String, args:Array):
+	GM.ui.emit_signal("on_option_button", method, args)
+
+# --- reactions -------------------------------------------------------------------
 
 func _react(_action: String, _args):
 	if(_action == "travel"):
@@ -211,7 +303,7 @@ func _react(_action: String, _args):
 			return
 		currentPose = dailyLife.getActionAnimation(actionID)
 		if(action.has("scene")):
-			# Inherited T5 scenes keep their own text and flow.
+			# The generic inline presenter keeps the University shell around T5 scene flows.
 			runScene(str(action["scene"]))
 			return
 		lastResult = dailyLife.performAction(actionID)
